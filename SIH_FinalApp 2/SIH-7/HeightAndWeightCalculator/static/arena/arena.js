@@ -800,7 +800,7 @@ class Bowler extends Level {
     const half = Math.floor(n / 2); this.targets = [...Array(half).fill('L'), ...Array(n - half).fill('R')].sort(() => Math.random() - 0.5);
   }
   start() { this.state = 'center'; this.tc = null; S.dots = []; setDots(this.n); }
-  get playerAlpha() { return S.mode !== 'blind' && this.state === 'anim' ? 0.28 : 1; }
+  get playerAlpha() { return S.mode !== 'blind' && this.state === 'anim' ? 0.6 : 1; }   // see-through as a backup; the player stands aside anyway
   update(now) {
     const b = S.body;
     if (this.state === 'center') {
@@ -846,13 +846,14 @@ class Bowler extends Level {
     if (S.mode === 'blind' || !S.base || !['anim', 'occluded', 'reveal'].includes(this.state)) return;
     if (this.state === 'occluded' || (this.state === 'anim' && now - this.t0 >= this.tOcc)) return;   // lights out: nothing to see
     const t = (now - this.t0) / 1000, dir = this.target === 'L' ? -1 : 1;
-    const groundY = groundLine(), cx = V(S.vw / 2, 0).x;
+    const groundY = groundLine(), cx = BOWLER_AT * VIEW.W;           // in the open part of the screen, never behind the player
     this.bw = ART.drawBowler(g, cx, groundY, VIEW.H, this.state === 'reveal' ? 1.75 : Math.min(t, 1.75), dir, { showBall: this.state === 'reveal' });
   }
   draw(g, V_, now) {
     if (this.state !== 'reveal' || !this.bw || S.mode === 'blind') return;
     const dir = this.target === 'L' ? -1 : 1, u = clamp((now - this.tRes) / 450, 0, 1);
-    const from = this.bw.hand, to = V(S.base.hipX + dir * S.base.sw * 2.6, S.base.hipY - S.base.bodyPx * 0.05);
+    const from = this.bw.hand, end = V(S.base.hipX + dir * S.base.sw * 2.6, S.base.hipY - S.base.bodyPx * 0.05);
+    const to = { x: clamp(end.x, VIEW.W * 0.04, VIEW.W * 0.96), y: end.y };
     const bx = from.x + (to.x - from.x) * u, by = from.y + (to.y - from.y) * u - Math.sin(u * Math.PI) * 60 * DPR;
     g.save(); g.strokeStyle = 'rgba(255,255,255,0.5)'; g.lineWidth = 10 * DPR * u; g.lineCap = 'round';
     g.beginPath(); g.moveTo(from.x + (to.x - from.x) * Math.max(0, u - 0.3), from.y + (to.y - from.y) * Math.max(0, u - 0.3)); g.lineTo(bx, by); g.stroke(); g.restore();
@@ -1470,11 +1471,19 @@ function titleScene(g, W, H, groundY, now) {
 // full-body game - standing on the ground line, about 62 % of the screen tall, whatever their distance;
 // upper-body game - a foreground player, waist at the bottom edge. Everything in the levels is drawn through
 // the same mapping, so raiders, logs and pads stay exactly where the body is.
+const BOWL_SIDE = 0.18, BOWLER_AT = 0.5;   // Read the Bowler: player's hips / bowler's run-up, as a share of the screen width
 function placeView(W, H, dt) {
   const fit = Math.min(W / S.vw, H / S.vh);
   let s = fit, ox = (W - S.vw * fit) / 2, oy = (H - S.vh * fit) / 2;
   const free = !S.base || !S.running || (S.level && (S.level.key === 'pulse' || S.level.key === 'calib'));
-  if (!free && S.scope === 'full') {
+  const crease = !free && S.level && S.level.key === 'bowler' && S.mode !== 'blind';
+  if (crease && S.scope === 'full') {          // batsman's view: player small at the crease on the left, bowler free in the middle
+    s = clamp((0.42 * H) / S.base.bodyPx, fit * 0.4, fit * 1.2);
+    ox = BOWL_SIDE * W - S.base.hipX * s; oy = 0.95 * H - S.base.ankY * s;
+  } else if (crease) {
+    s = clamp(Math.min(0.1 * W, 0.15 * H) / S.base.sw, fit * 0.35, fit);
+    ox = BOWL_SIDE * W - S.base.hipX * s; oy = 1.02 * H - S.base.hipY * s;
+  } else if (!free && S.scope === 'full') {
     s = clamp((0.62 * H) / S.base.bodyPx, fit * 0.6, fit * 1.6);
     ox = W / 2 - S.base.hipX * s; oy = 0.9 * H - S.base.ankY * s;
   } else if (!free && S.scope === 'upper') {
