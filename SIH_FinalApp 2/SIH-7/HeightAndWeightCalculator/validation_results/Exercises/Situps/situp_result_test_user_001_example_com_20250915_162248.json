@@ -1,0 +1,10 @@
+{
+  "user_id": "test_user_001@example.com",
+  "exercise_type": "situps",
+  "repetitions": 1,
+  "form_score": 85,
+  "duration": 21,
+  "range_of_motion": 78,
+  "speed_control": 82,
+  "timestamp": "2025-09-15T16:22:48Z"
+}

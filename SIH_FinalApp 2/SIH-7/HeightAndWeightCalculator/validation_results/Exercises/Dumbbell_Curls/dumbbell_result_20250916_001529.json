@@ -1,0 +1,20 @@
+{
+    "timestamp": "20250916_001529",
+    "exercise_type": "dumbbell_curls",
+    "estimated_weight": 5.0,
+    "left_reps": 3,
+    "right_reps": 1,
+    "total_reps": 4,
+    "left_tempos": [
+        0.7447052001953125,
+        0.31911420822143555
+    ],
+    "right_tempos": [],
+    "left_roms": [
+        135.1055509696427,
+        126.81577351535293
+    ],
+    "right_roms": [],
+    "session_duration": 34.43,
+    "analysis_date": "2025-09-16T00:15:29.198868"
+}

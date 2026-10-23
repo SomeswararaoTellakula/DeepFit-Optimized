@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit - Hidden Potential</title>
+    {% include 'partials/df_page_style.html' %}
+</head>
+<body>
+<main class="wrap">
+    {% set back_href = '/tests' %}
+    {% include 'partials/back_nav.html' %}
+    <a href="/tests?mode={{ mode }}" class="btn secondary">← All tests</a>
+    <h1 style="margin-top:16px">Hidden Potential</h1>
+    {% if not athlete %}
+    <p class="muted">Please <a href="/login">log in</a> first.</p>
+    {% else %}
+    <div class="muted">{{ athlete.name }}{% if athlete.age %} · {{ athlete.age }}{% endif %}{% if athlete.gender %} · {{ athlete.gender }}{% endif %}</div>
+
+    <section class="card row" aria-label="Index">
+        <div style="width:120px;height:120px;border-radius:50%;border:10px solid var(--cyan);display:flex;flex-direction:column;align-items:center;justify-content:center">
+            <div style="font-size:2.4rem;font-weight:800;line-height:1">{{ '%.0f' % hp.index if hp.index is not none else '–' }}</div>
+            <div class="muted" style="font-size:.75rem">out of 100</div>
+        </div>
+        <div style="flex:1;min-width:220px">
+            {% if hp.late_bloomer %}<span class="badge warn">LATE BLOOMER · HIGH POTENTIAL</span>{% endif %}
+            {% if hp.index is not none and not hp.complete %}<span class="badge warn">PROVISIONAL</span>{% endif %}
+            <p style="margin:.5rem 0 0;line-height:1.5">{{ hp.summary }}</p>
+        </div>
+    </section>
+
+    <section class="card" aria-label="Three signals">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">Three signals</h2>
+        {% set F = hp.fitness_today %}{% set FA = hp.fitness_adjusted %}{% set CO = hp.coachability %}{% set HR = hp.headroom %}
+        <div style="margin-bottom:12px">
+            <div class="row" style="justify-content:space-between"><span>Fitness today (vs. targets for your age)</span><b>{{ '%.0f' % F if F is not none else 'not yet' }}</b></div>
+            <div class="bar"><div style="width:{{ F or 0 }}%;background:#64748b"></div></div>
+        </div>
+        <div style="margin-bottom:12px">
+            <div class="row" style="justify-content:space-between"><span>Fitness adjusted for maturity{% if hp.biological_age %} (biological age ≈ {{ hp.biological_age }}){% endif %}</span><b style="color:var(--amber)">{{ '%.0f' % FA if FA is not none else 'not yet' }}</b></div>
+            <div class="bar"><div style="width:{{ FA or 0 }}%;background:#f59e0b"></div></div>
+            {% if hp.maturity %}<div class="muted" style="font-size:.85rem;margin-top:4px">Growth spurt {{ 'about %.1f years %s average' % ((hp.maturity.years_vs_average|abs), 'later than' if hp.maturity.years_vs_average > 0 else 'earlier than') }}
+                ({{ hp.maturity.status }}). {{ hp.maturity.note }}</div>{% endif %}
+        </div>
+        <div style="margin-bottom:12px">
+            <div class="row" style="justify-content:space-between"><span>Coachability (learning speed){% if hp.coachability_percentile is not none %} · {{ hp.coachability_percentile }}th percentile*{% endif %}</span><b style="color:var(--green)">{{ '%.0f' % CO if CO is not none else 'not yet' }}</b></div>
+            <div class="bar"><div style="width:{{ CO or 0 }}%;background:#22c55e"></div></div>
+        </div>
+        <div>
+            <div class="row" style="justify-content:space-between"><span>Growth headroom</span><b style="color:var(--cyan)">{{ '%.0f' % HR if HR is not none else 'not yet' }}</b></div>
+            <div class="bar"><div style="width:{{ HR or 0 }}%;background:#06b6d4"></div></div>
+        </div>
+        <p class="muted" style="font-size:.8rem;margin:10px 0 0">Index = {{ (hp.weights.fitness_adjusted*100)|int }}% adjusted fitness + {{ (hp.weights.coachability*100)|int }}% coachability + {{ (hp.weights.headroom*100)|int }}% growth headroom.
+            *Percentiles use starter norms until real data is collected.</p>
+    </section>
+
+    {% if hp.missing %}
+    <section class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 8px">To complete your index</h2>
+        <div class="row">
+            {% if 'growth_measures' in hp.missing %}<a class="btn" href="/ex/growth_measures?mode={{ mode }}">Growth Measures</a>{% endif %}
+            {% if 'coachability' in hp.missing %}<a class="btn" href="/ex/coachability?mode={{ mode }}">Coachability Challenge</a>{% endif %}
+            {% if 'fitness_tests' in hp.missing %}<a class="btn" href="/tests?mode={{ mode }}">Fitness tests</a>{% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if rank and rank.by_potential %}
+    <section class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">Rank among {{ rank.group_size }} {{ rank.group }}</h2>
+        <div class="grid3" style="align-items:center;text-align:center">
+            <div><div class="muted">By today's fitness</div><div style="font-size:2rem;font-weight:800;color:var(--muted)">#{{ rank.by_fitness or '–' }}</div></div>
+            <div aria-hidden="true" style="font-size:2rem;color:var(--cyan)">→</div>
+            <div><div class="muted">By potential</div><div style="font-size:2rem;font-weight:800;color:var(--cyan)">#{{ rank.by_potential }}</div></div>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="card row" style="justify-content:space-between">
+        <p class="muted" style="margin:0;max-width:420px">Share your verified results with a coach or scout: they scan the QR code on your Talent Passport.</p>
+        <a class="btn" href="{{ passport_url }}">Open my Talent Passport</a>
+    </section>
+    {% endif %}
+</main>
+</body>
+</html>

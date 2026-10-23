@@ -1,0 +1,90 @@
+{
+    "total_sessions": 7,
+    "metrics": [
+        {
+            "timestamp": "2025-09-12T12-47-06",
+            "height_cm": 175.5,
+            "weight_kg": 70.2,
+            "confidence_score": 0.85,
+            "uncertainty_height": 2.1,
+            "uncertainty_weight": 3.5,
+            "processing_time_ms": 150.0,
+            "detection_status": "good_position",
+            "calibration_quality": 0.5,
+            "bmi": 22.792022792022795
+        },
+        {
+            "timestamp": "2025-09-12T13-20-09",
+            "height_cm": 174.3431284103762,
+            "weight_kg": 63.407365670565355,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 320.0955390930176,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 20.860755884350414
+        },
+        {
+            "timestamp": "2025-09-12T13-20-12",
+            "height_cm": 177.3520323507222,
+            "weight_kg": 74.41088084686236,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 232.40923881530762,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 23.65724166768155
+        },
+        {
+            "timestamp": "2025-09-12T13-20-16",
+            "height_cm": 169.20761966190912,
+            "weight_kg": 59.022135895926894,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 295.60160636901855,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 20.61460841754042
+        },
+        {
+            "timestamp": "2025-09-12T13-20-23",
+            "height_cm": 171.3530978650626,
+            "weight_kg": 75.4321890170341,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 256.12854957580566,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 25.690513809309167
+        },
+        {
+            "timestamp": "2025-09-12T13-20-25",
+            "height_cm": 179.90004671822257,
+            "weight_kg": 71.50202697179748,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 239.6693229675293,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 22.093056402805423
+        },
+        {
+            "timestamp": "2025-09-12T13-20-26",
+            "height_cm": 180.4042762493002,
+            "weight_kg": 74.18064366219495,
+            "confidence_score": 0.492,
+            "uncertainty_height": 1.0,
+            "uncertainty_weight": 2.0,
+            "processing_time_ms": 280.0018787384033,
+            "detection_status": "good_position",
+            "calibration_quality": 999.0,
+            "bmi": 22.79276127945908
+        }
+    ],
+    "last_updated": "2025-09-12T13:20:26.746515"
+}

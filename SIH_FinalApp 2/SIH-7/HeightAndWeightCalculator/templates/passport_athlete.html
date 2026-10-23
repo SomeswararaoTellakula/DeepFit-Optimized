@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit Talent Passport - {{ name }}</title>
+    {% include 'partials/df_page_style.html' %}
+</head>
+<body>
+<main class="wrap">
+    {% set back_href = '/tests' if (session.get('user_id') or session.get('blind_user_id')) else '/' %}
+    {% include 'partials/back_nav.html' %}
+    {% if scanned %}
+    <section role="status" style="margin:4px 0 14px;padding:22px;border-radius:18px;text-align:center;
+             background:{{ '#052e16' if all_valid else '#450a0a' }};border:3px solid {{ '#22c55e' if all_valid else '#ef4444' }}">
+        <div style="font-size:2.4rem;font-weight:900;color:{{ '#4ade80' if all_valid else '#f87171' }}">
+            {{ '✓ VERIFIED by DeepFit server' if all_valid else '✗ NOT VALID - some results were edited' }}</div>
+        <div style="margin-top:6px;font-size:1.05rem">Checked just now: <b>{{ checked_at }}</b></div>
+        <div class="muted" style="margin-top:6px">{{ 'These are the original records. Every result’s digital signature was re-checked the moment you scanned the code.' if all_valid else 'At least one result below was changed after DeepFit signed it - see the Check column.' }}</div>
+    </section>
+    {% endif %}
+    <div class="muted" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.8rem">DeepFit Talent Passport</div>
+    <h1>{{ name }}</h1>
+    <div class="muted">{% if age %}Age {{ age }}{% endif %}{% if gender %} · {{ gender }}{% endif %} · every result below is face-verified and digitally signed</div>
+
+    {% if hp and hp.index is not none %}
+    <div class="card row" style="justify-content:space-between">
+        <div>
+            <div class="muted" style="font-weight:700;text-transform:uppercase;font-size:.8rem;letter-spacing:.06em">Hidden Potential Index</div>
+            <div class="muted" style="max-width:440px;margin-top:4px">{{ hp.summary }}</div>
+            {% if hp.late_bloomer %}<span class="badge warn" style="margin-top:8px">LATE BLOOMER · HIGH POTENTIAL</span>{% endif %}
+        </div>
+        <div class="big">{{ '%.0f' % hp.index }}</div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <table>
+            <thead><tr><th>Test</th><th>Result</th><th>Rating</th><th>Date</th><th>Check</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+            <tr>
+                <td><a href="{{ r.url }}">{{ r.name }}</a></td>
+                <td>{{ ('%g' % r.value) if r.value is number else r.value }} {{ r.unit }}{% if r.coach_timed %} <span class="muted">(coach-timed)</span>{% endif %}</td>
+                <td class="rating-{{ (r.rating or '').split(' ')[0] }}">{{ r.rating or '-' }}</td>
+                <td>{{ r.when }}</td>
+                <td>{% if r.valid %}<span class="badge ok">✓ valid</span>{% else %}<span class="badge bad">✗ tampered</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card row" style="justify-content:space-between">
+        <p class="muted" style="max-width:420px;margin:0">Scan to open this passport. Each result links to its own page with the
+            identity evidence and a skeleton-only replay of the movement. Ratings use DeepFit's starter benchmarks.
+            {% if rows %}<br><a class="btn" href="{{ card_url }}" style="margin-top:10px">🖨️ Printable passport card</a>{% endif %}</p>
+        <div style="text-align:center"><div class="qr" id="qr" aria-label="QR code for this passport"></div><div class="muted" style="font-size:.72rem;max-width:180px;word-break:break-all;margin-top:6px">{{ share_url or '' }}</div></div>
+    </div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+    // QR code: browser library (online) -> server-made SVG (offline, needs segno) -> plain link
+    (function () {
+        const SHARE = {{ (share_url or '')|tojson }} || location.href;
+        const QRT = SHARE.split('?')[0] + '?scan=1';   // the scanner sees the VERIFIED banner   // LAN / public address, never 'localhost'
+        const box = document.getElementById('qr');
+        try { new QRCode(box, { text: QRT, width: 140, height: 140 }); return; } catch (e) { }
+        const img = new Image(140, 140);
+        img.alt = 'QR code for this page';
+        img.src = '/qr.svg?data=' + encodeURIComponent(QRT);
+        img.onerror = () => { box.style.cssText = 'width:auto;height:auto;background:none;padding:0';
+                              box.innerHTML = '<span style="font-size:.75rem;word-break:break-all;color:#94a3b8"></span>';
+                              box.firstChild.textContent = SHARE; };
+        box.appendChild(img);
+    })();
+</script>
+</body>
+</html>

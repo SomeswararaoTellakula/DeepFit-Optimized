@@ -1,0 +1,94 @@
+{
+  "gender": {
+    "male": {
+      "count": 98,
+      "height_mae": 28.23935152379963,
+      "weight_mae": 26.63785816286392,
+      "confidence": 0.6071798938706018
+    },
+    "female": {
+      "count": 102,
+      "height_mae": 27.06269081361232,
+      "weight_mae": 20.888741951518398,
+      "confidence": 0.6018278334342168
+    }
+  },
+  "body_type": {
+    "slim": {
+      "count": 55,
+      "height_mae": 30.104237668098193,
+      "weight_mae": 15.6249795950382,
+      "confidence": 0.5838144105119039
+    },
+    "heavy": {
+      "count": 54,
+      "height_mae": 27.15833230959111,
+      "weight_mae": 30.25612881527202,
+      "confidence": 0.5942228590275405
+    },
+    "athletic": {
+      "count": 41,
+      "height_mae": 28.997709850341487,
+      "weight_mae": 31.02319616334075,
+      "confidence": 0.5522266942706283
+    },
+    "average": {
+      "count": 50,
+      "height_mae": 24.33323583986997,
+      "weight_mae": 19.5201180513356,
+      "confidence": 0.6810189435774286
+    }
+  },
+  "ethnicity": {
+    "african": {
+      "count": 44,
+      "height_mae": 28.397899908333216,
+      "weight_mae": 22.396967548820967,
+      "confidence": 0.6023596640443135
+    },
+    "caucasian": {
+      "count": 37,
+      "height_mae": 26.542415360450597,
+      "weight_mae": 24.815028719290193,
+      "confidence": 0.6179869589306405
+    },
+    "hispanic": {
+      "count": 50,
+      "height_mae": 32.915701795895025,
+      "weight_mae": 29.071868129328532,
+      "confidence": 0.5791504570535131
+    },
+    "asian": {
+      "count": 36,
+      "height_mae": 25.19873204305502,
+      "weight_mae": 17.58143309336272,
+      "confidence": 0.6378711955137149
+    },
+    "mixed": {
+      "count": 33,
+      "height_mae": 22.525288020386505,
+      "weight_mae": 22.758004437157467,
+      "confidence": 0.5939345460623093
+    }
+  },
+  "lighting": {
+    "good": {
+      "count": 114,
+      "height_mae": 25.276840281955597,
+      "weight_mae": 21.52090612346973,
+      "confidence": 0.6523692498427504
+    },
+    "mixed": {
+      "count": 40,
+      "height_mae": 29.853640146933504,
+      "weight_mae": 24.234032649590795,
+      "confidence": 0.5562755741072192
+    },
+    "poor": {
+      "count": 46,
+      "height_mae": 31.568380745663955,
+      "weight_mae": 28.661242933833904,
+      "confidence": 0.527585894853191
+    }
+  }
+}

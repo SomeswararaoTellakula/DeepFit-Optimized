@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit verified {{ 'result' if kind == 'result' else 'passport' }} card - {{ p.athlete_display if kind == 'result' else name }}</title>
+    <style>
+        @page { size: A4; margin: 14mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: #e2e8f0; color: #0f172a; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+        .toolbar { max-width: 760px; margin: 18px auto 0; padding: 0 12px; display: flex; gap: 10px; justify-content: space-between; }
+        .tb { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 0; cursor: pointer;
+              font-weight: 800; font-size: 1rem; text-decoration: none; background: #0f172a; color: #fff; }
+        .tb.alt { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+        .sheet { max-width: 760px; margin: 14px auto 32px; background: #fff; border-radius: 14px; overflow: hidden;
+                 box-shadow: 0 10px 30px rgba(15, 23, 42, .15); border: 1px solid #cbd5e1; }
+        .head { background: #0b1b33; color: #fff; padding: 18px 24px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .head .brand { font-weight: 900; letter-spacing: .08em; font-size: .85rem; color: #67e8f9; }
+        .head h1 { margin: 2px 0 0; font-size: 1.35rem; }
+        .stamp { border: 3px solid #16a34a; color: #16a34a; border-radius: 10px; padding: 6px 12px; font-weight: 900;
+                 font-size: .95rem; background: #f0fdf4; text-align: center; transform: rotate(-3deg); }
+        .stamp.bad { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+        .body { padding: 20px 24px; }
+        .row { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+        .grow { flex: 1; min-width: 260px; }
+        .lbl { font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #64748b; }
+        .who { font-size: 1.5rem; font-weight: 900; margin: 2px 0; }
+        .value { font-size: 3.4rem; font-weight: 900; line-height: 1; color: #0e7490; }
+        .value small { font-size: 1.2rem; color: #475569; font-weight: 700; }
+        .rating { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 999px; font-weight: 800; font-size: .85rem; }
+        .r-Excellent, .r-Good { background: #dcfce7; color: #166534; } .r-Fair { background: #fef3c7; color: #92400e; }
+        .r-Needs { background: #fee2e2; color: #991b1b; }
+        .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+        .fact { background: #f1f5f9; border-radius: 10px; padding: 10px; }
+        .fact b { display: block; font-size: 1.05rem; }
+        .figure { width: 190px; height: 210px; background: #0b1b33; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+        .figure svg { width: 170px; height: 190px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid #e2e8f0; font-size: .92rem; }
+        .ok { color: #16a34a; font-weight: 800; } .no { color: #dc2626; font-weight: 800; }
+        .verify { display: flex; gap: 18px; align-items: center; border-top: 2px dashed #cbd5e1; margin-top: 18px; padding-top: 16px; }
+        .qr { width: 170px; height: 170px; flex: none; }
+        .qr svg, .qr img, .qr canvas { width: 170px !important; height: 170px !important; }
+        .url { font-family: ui-monospace, Menlo, monospace; font-size: .72rem; word-break: break-all; color: #334155; }
+        .foot { background: #f8fafc; color: #64748b; font-size: .72rem; padding: 10px 24px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+        @media (max-width: 560px) { .facts { grid-template-columns: 1fr 1fr; } .verify { flex-direction: column; align-items: flex-start; } }
+        @media print {
+            body { background: #fff; }
+            .toolbar { display: none; }
+            .sheet { box-shadow: none; margin: 0 auto; border: 1px solid #94a3b8; }
+            .head, .figure, .fact, .stamp, .rating, .foot { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+    </style>
+</head>
+<body>
+<div class="toolbar">
+    <a class="tb alt" id="card-back" href="{{ back_url }}">← Back</a>
+    <button class="tb" onclick="window.print()">🖨️ Print / Save as PDF</button>
+</div>
+
+<article class="sheet" aria-label="Verified result card">
+    <header class="head">
+        <div>
+            <div class="brand">DEEPFIT TALENT PASSPORT</div>
+            <h1>{{ 'Verified result card' if kind == 'result' else 'Verified athlete card' }}</h1>
+        </div>
+        {% if valid %}
+        <div class="stamp">✓ VERIFIED<br><span style="font-size:.7rem">signature checked</span></div>
+        {% else %}
+        <div class="stamp bad">✗ NOT VALID<br><span style="font-size:.7rem">edited after signing</span></div>
+        {% endif %}
+    </header>
+
+    <div class="body">
+    {% if kind == 'result' %}
+        <div class="row">
+            <div class="grow">
+                <div class="lbl">Athlete</div>
+                <div class="who">{{ p.athlete_display }}</div>
+                <div style="color:#475569">{% if p.age %}Age {{ p.age }}{% endif %}{% if p.gender %} · {{ p.gender }}{% endif %} · {{ p.mode }} mode</div>
+                <div class="lbl" style="margin-top:14px">{{ p.exercise_name }}</div>
+                <div class="value">{{ ('%g' % p.value) if p.value is number else p.value }} <small>{{ p.unit }}</small></div>
+                {% if rating %}<span class="rating r-{{ rating.split(' ')[0] }}">{{ rating }}{% if bench.target is defined and bench.target is not none %} · target {{ '≥' if bench.higher_is_better else '≤' }} {{ '%g' % bench.target }} {{ p.unit }}{% endif %}</span>{% endif %}
+            </div>
+            {% if figure %}
+            <div>
+                <div class="figure" role="img" aria-label="Skeleton still from the test (no photo is stored)">
+                    <svg viewBox="{{ figure.viewbox }}" preserveAspectRatio="xMidYMid meet">
+                        {% for x1, y1, x2, y2 in figure.lines %}
+                        <line x1="{{ '%.1f' % x1 }}" y1="{{ '%.1f' % y1 }}" x2="{{ '%.1f' % x2 }}" y2="{{ '%.1f' % y2 }}"
+                              stroke="#42c8f5" stroke-width="{{ '%.1f' % figure.stroke }}" stroke-linecap="round"/>
+                        {% endfor %}
+                        {% if figure.head %}<circle cx="{{ '%.1f' % figure.head[0] }}" cy="{{ '%.1f' % figure.head[1] }}" r="{{ '%.1f' % figure.head[2] }}"
+                              fill="none" stroke="#42c8f5" stroke-width="{{ '%.1f' % figure.stroke }}"/>{% endif %}
+                    </svg>
+                </div>
+                <div style="font-size:.7rem;color:#64748b;text-align:center;margin-top:4px">skeleton at {{ figure.t }} s · no photo stored</div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="facts">
+            <div class="fact"><span class="lbl">Recorded</span><b>{{ p.timestamp|replace('T', ' ')|replace('Z', ' UTC') }}</b></div>
+            <div class="fact"><span class="lbl">Face before test</span><b>{{ 'matched' if p.identity.pre_check_score is not none else p.identity.pre_check }}{% if p.identity.pre_check_score is not none %} ({{ '%.2f' % p.identity.pre_check_score }}){% endif %}</b></div>
+            <div class="fact"><span class="lbl">Face during test</span><b>{{ p.identity.live_passes }} / {{ p.identity.live_checks }} matched</b></div>
+        </div>
+        {% if coach %}
+        <p style="margin:12px 0 0;color:#334155"><b>Coachability:</b> errors per try {{ coach.errors_per_try|join(' → ') }} ·
+            errors fell {{ coach.reduction_pct or 0 }}% · {{ coach.percentile }}th percentile (starter norm)</p>
+        {% endif %}
+        {% if maturity %}
+        <p style="margin:12px 0 0;color:#334155"><b>Growth:</b> sitting height {{ maturity.sitting_height_cm }} cm ·
+            {{ maturity.status }} developer ({{ maturity.maturity_offset }} yrs from growth spurt)</p>
+        {% endif %}
+        {% if p.coach_timed %}<p style="margin:10px 0 0;color:#64748b;font-size:.85rem">Coach-timed with a stopwatch.</p>{% endif %}
+        {% if p.identity.captured_on %}<p style="margin:10px 0 0;color:#64748b;font-size:.85rem">📱 Captured on the {{ p.identity.captured_on }}.</p>{% endif %}
+    {% else %}
+        <div class="lbl">Athlete</div>
+        <div class="who">{{ name }}</div>
+        <div style="color:#475569">{% if age %}Age {{ age }}{% endif %}{% if gender %} · {{ gender }}{% endif %}</div>
+        {% if hp and hp.index is not none %}
+        <div style="margin-top:12px"><span class="lbl">Hidden Potential Index</span>
+            <div class="value" style="font-size:2.4rem">{{ '%.0f' % hp.index }}</div>
+            <div style="color:#475569;font-size:.9rem">{{ hp.summary }}</div></div>
+        {% endif %}
+        <table>
+            <thead><tr><th>Test</th><th>Result</th><th>Rating</th><th>Date</th><th>Signature</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+            <tr><td>{{ r.name }}</td>
+                <td><b>{{ ('%g' % r.value) if r.value is number else r.value }}</b> {{ r.unit }}{% if r.coach_timed %} (coach-timed){% endif %}</td>
+                <td>{{ r.rating or '-' }}</td><td>{{ r.when }}</td>
+                <td>{% if r.valid %}<span class="ok">✓ valid</span>{% else %}<span class="no">✗ edited</span>{% endif %}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+
+        <section class="verify" aria-label="Verify this card">
+            <div class="qr" id="qr">{% if qr_svg %}{{ qr_svg|safe }}{% endif %}</div>
+            <div>
+                <div style="font-weight:900;font-size:1.05rem">Scan to verify</div>
+                <p style="margin:4px 0 8px;color:#334155;font-size:.9rem">The code opens the <b>original record on the DeepFit server</b>.
+                    It re-checks the digital signature and shows <b>VERIFIED</b> or <b>NOT VALID</b>, with the face-check evidence
+                    {%- if kind == 'result' %} and a skeleton replay of the movement{% endif %}. A printed or screenshotted number
+                    that doesn't match the server is not genuine.</p>
+                <div class="url">{{ share_url }}</div>
+            </div>
+        </section>
+    </div>
+
+    <footer class="foot">
+        <span>Card ID {{ card_id[:16] }} · signature checked {{ checked_at }}</span>
+        <span>DeepFit · SIH 2025 PS 25073 · starter benchmarks</span>
+    </footer>
+</article>
+
+{% if not qr_svg %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+    (function () {
+        const box = document.getElementById('qr'), target = {{ qr_target|tojson }};
+        try { new QRCode(box, { text: target, width: 170, height: 170, correctLevel: QRCode.CorrectLevel.M }); return; } catch (e) { }
+        box.innerHTML = '<span class="url"></span>';
+        box.firstChild.textContent = 'QR unavailable offline - install segno on the server (pip install segno). Link: ' + target;
+    })();
+</script>
+{% endif %}
+<script>
+    // back to the page this card came from without adding a new history entry
+    document.getElementById('card-back').addEventListener('click', function (e) {
+        try {
+            var ref = document.referrer && new URL(document.referrer);
+            if (ref && ref.host === location.host && history.length > 1) { e.preventDefault(); history.back(); }
+        } catch (err) { }
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit - {{ ex.name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='situp-modern.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/exercise-common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/exercise-header.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <meta name="theme-color" content="#000000">
+    <style>
+        html, body { height: 100%; background: linear-gradient(180deg, #0f1724 0%, #071428 100%) !important;
+                     color: #e6f0ff !important; background-attachment: fixed; }
+        .container { background: transparent !important; padding: 1rem; }
+        .video-section .video-container, .timer-card, .stats-card, .instructions-card {
+            background: #071730 !important; border: 1px solid rgba(255,255,255,0.04) !important;
+            box-shadow: 0 6px 18px rgba(2,6,23,0.45); color: #e6f0ff !important; }
+        .video-placeholder .placeholder-content h3, .video-placeholder .placeholder-content p,
+        .stat-label, .stat-value, .timer-label, .session-status, .feedback { color: #e6f0ff !important; }
+        .btn-primary { background-color: #06b6d4 !important; border-color: #06b6d4 !important; }
+        .btn-secondary { background-color: #1f2937 !important; border-color: #374151 !important; color: #fff !important; }
+        .btn-warning { background-color: #f59e0b !important; border-color: #f59e0b !important; }
+        .btn-success { background-color: #10b981 !important; border-color: #10b981 !important; }
+        .btn:focus-visible { outline: 3px solid #fde047; outline-offset: 2px; }
+
+        /* Accessibility mode switch */
+        .mode-bar { display: flex; gap: .5rem; flex-wrap: wrap; margin: .25rem 0 1rem; }
+        .mode-bar button { flex: 1 1 160px; padding: .6rem .8rem; border-radius: 10px; border: 1px solid #334155;
+                           background: #0b1b33; color: #cbd5e1; font-weight: 600; cursor: pointer; }
+        .mode-bar button[aria-pressed="true"] { background: #06b6d4; color: #001018; border-color: #06b6d4; }
+        .mode-note { font-size: .9rem; color: #94a3b8; margin: -0.5rem 0 1rem; }
+
+        /* Big value + benchmark */
+        .big-value { font-size: 3rem; font-weight: 800; line-height: 1; color: #22d3ee; }
+        .big-unit { font-size: 1rem; color: #94a3b8; margin-left: .3rem; }
+        .target-line { font-size: .95rem; color: #a5f3fc; margin-top: .35rem; }
+
+        /* Deaf mode visual cues */
+        #flash { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; opacity: 0;
+                 transition: opacity .35s; z-index: 6; }
+        #flash.ok { background: rgba(34,197,94,.45); opacity: 1; }
+        #flash.bad { box-shadow: inset 0 0 0 10px #ef4444; opacity: 1; }
+        #countdown-overlay { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+                             font-size: 9rem; font-weight: 900; color: #fde047; text-shadow: 0 6px 30px #000;
+                             z-index: 7; pointer-events: none; }
+        #caption { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; display: none; padding: .6rem 1rem;
+                   background: rgba(0,0,0,.75); color: #fff; font-size: 1.5rem; font-weight: 700; text-align: center; }
+        body.mode-deaf #caption { display: block; }
+        body.mode-blind .controls .btn { font-size: 1.15rem; padding: 16px 18px; }
+
+        /* Stopwatch (coach-timed tests) */
+        .stopwatch { font-size: 5rem; font-weight: 800; text-align: center; color: #22d3ee; padding: 2rem 0; }
+
+        /* Result card */
+        #result-card { display: none; position: fixed; inset: 0; background: rgba(2,6,23,.8); z-index: 50;
+                       align-items: center; justify-content: center; padding: 1rem; }
+        #result-card .card { background: #0b1b33; border: 1px solid #1e3a5f; border-radius: 18px; padding: 1.6rem;
+                             max-width: 460px; width: 100%; text-align: center; }
+        .rating { display: inline-block; padding: .35rem .9rem; border-radius: 999px; font-weight: 800; margin: .6rem 0; }
+        .rating.Excellent { background: #16a34a; } .rating.Good { background: #22c55e; color: #052e16; }
+        .rating.Fair { background: #f59e0b; color: #1c1300; } .rating.Needs-work { background: #ef4444; }
+        #result-card .actions { display: flex; gap: .5rem; flex-wrap: wrap; justify-content: center; margin-top: 1rem; }
+        .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+        .height-row { display: flex; gap: .5rem; align-items: center; margin-top: .6rem; }
+        .pattern { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: .8rem; }
+        .pattern .step { background: #0b1b33; border: 1px solid #1e3a5f; border-radius: 12px; padding: 8px; font-size: .85rem; }
+        .pattern .step b { display: block; font-size: .75rem; color: #94a3b8; }
+        .pattern .step.ok { background: #0f2f1f; border-color: #16a34a; }
+        .pattern .step.bad { background: #3b0d0d; border-color: #ef4444; }
+        .pattern .step.next { border: 2px solid #22d3ee; }
+        .tries { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: .6rem; }
+        .tries div { background: #0b1b33; border-radius: 10px; padding: 6px; text-align: center; font-size: .8rem; color: #94a3b8; }
+        .tries div b { display: block; font-size: 1.2rem; color: #e6f0ff; }
+        .tip { margin-top: .6rem; padding: .7rem .9rem; border-radius: 12px; background: #3b2a0b; color: #fde68a; font-weight: 600; display: none; }
+        .meter { height: 14px; border-radius: 999px; background: #1e293b; overflow: hidden; }
+        .meter > div { height: 100%; width: 0; background: linear-gradient(90deg, #ef4444, #f59e0b, #22c55e); transition: width .2s; }
+        .inputs-row { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .6rem; }
+        .inputs-row label { display: flex; flex-direction: column; font-size: .85rem; color: #cbd5e1; gap: .2rem; }
+        .inputs-row input { width: 110px; padding: .45rem .5rem; border-radius: 8px; border: 1px solid #334155; background: #0b1b33; color: #fff; }
+        .height-row input { width: 90px; padding: .35rem .5rem; border-radius: 8px; border: 1px solid #334155;
+                            background: #0b1b33; color: #fff; }
+    </style>
+</head>
+<body class="mode-{{ mode }}">
+    <div class="container">
+        <header class="app-header">
+            <div class="header-content">
+                <div class="header-title">
+                    <h1 style="color: #06b6d4;"><span class="header-icon">{{ ex.icon }}</span> {{ ex.name }}</h1>
+                    <p>{% if ex.khelo_india %}Khelo India fitness test · {% endif %}{{ ex.category|capitalize }} ·
+                       {% if ex.duration %}{{ ex.duration }} s{% else %}coach-timed{% endif %}</p>
+                </div>
+                <a href="/tests?mode={{ mode }}" class="btn btn-secondary btn-back">
+                    <i class="fas fa-arrow-left"></i><span class="btn-text">All tests</span>
+                </a>
+            </div>
+        </header>
+
+        <div class="mode-bar" role="group" aria-label="Accessibility mode">
+            <button data-mode="standard" aria-pressed="{{ 'true' if mode == 'standard' else 'false' }}">👁️ Standard</button>
+            <button data-mode="blind" aria-pressed="{{ 'true' if mode == 'blind' else 'false' }}">🔊 Blind / low vision (audio guide)</button>
+            <button data-mode="deaf" aria-pressed="{{ 'true' if mode == 'deaf' else 'false' }}">🖐️ Deaf / hard of hearing (visual cues)</button>
+        </div>
+        <p class="mode-note" id="mode-note"></p>
+        {% if not athlete %}
+        <p class="mode-note" style="color:#fca5a5">You are not logged in - please <a href="/login" style="color:#67e8f9">log in</a> or register first.</p>
+        {% endif %}
+
+        <div class="main-content">
+            <div class="video-section">
+                <div class="video-container">
+                    <img id="video-feed" src="" alt="Live camera with pose tracking" style="display:none;">
+                    <div id="placeholder" class="video-placeholder">
+                        <div class="placeholder-content">
+                            {% if ex.camera == 'none' %}
+                            <div class="stopwatch" id="stopwatch" aria-live="off">0.00</div>
+                            <p>Verify identity, then the coach uses Start / Stop.</p>
+                            {% else %}
+                            <h3>📹 Camera ready</h3>
+                            <p>Press "Verify Identity", then "Start Test". Camera view: <b>{{ ex.camera }}</b>.</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div id="flash"></div>
+                    <div id="countdown-overlay" aria-hidden="true"></div>
+                    <div id="caption" aria-hidden="true"></div>
+                </div>
+
+                <div class="controls">
+                    <button id="verify-btn" class="btn btn-secondary" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8);">
+                        <i class="fas fa-user-check"></i> Verify Identity
+                    </button>
+                    <button id="start-btn" class="btn btn-primary" {% if require_face %}disabled title="Verify identity first"{% endif %}>
+                        {% if ex.camera == 'none' %}Start stopwatch{% else %}Start Test{% endif %}
+                    </button>
+                    <button id="stop-btn" class="btn btn-secondary" disabled>
+                        {% if ex.camera == 'none' %}Stop &amp; save{% else %}Stop &amp; save{% endif %}
+                    </button>
+                    <button id="speak-btn" class="btn btn-warning"><i class="fas fa-volume-up"></i> Read instructions</button>
+                </div>
+                <video id="verify-video" autoplay playsinline style="display:none;"></video>
+
+                {% if ex.key == 'coachability' %}
+                <section aria-label="Pattern" style="margin-top:1rem">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline">
+                        <h3 style="margin:0;font-size:1rem">The pattern <span id="pattern-code" style="color:#94a3b8;font-weight:400"></span></h3>
+                        <span id="coach-phase" style="color:#a5f3fc;font-weight:700"></span>
+                    </div>
+                    <div class="pattern" id="pattern"><div class="step"><b>…</b>Press Start to get your pattern</div></div>
+                    <div class="tries" id="tries">
+                        {% for i in range(1, 6) %}<div>Try {{ i }}<b>–</b></div>{% endfor %}
+                    </div>
+                    <div class="tip" id="coach-tip" role="status"></div>
+                </section>
+                {% endif %}
+                {% if ex.key == 'growth_measures' %}
+                <section aria-label="Your measurements" style="margin-top:1rem">
+                    <h3 style="margin:0;font-size:1rem">Measured with a tape and a scale</h3>
+                    <div class="inputs-row">
+                        <label for="in-height">Standing height (cm)<input id="in-height" type="number" min="100" max="230" step="0.1" value="{{ height_cm|int }}"></label>
+                        <label for="in-weight">Weight (kg)<input id="in-weight" type="number" min="15" max="200" step="0.1" placeholder="e.g. 42"></label>
+                        <label for="in-chair">Chair seat height (cm)<input id="in-chair" type="number" min="25" max="80" step="0.5" value="45"></label>
+                    </div>
+                </section>
+                {% endif %}
+            </div>
+
+            <div class="stats-section">
+                <div class="timer-card">
+                    <h3>⏱️ Timer</h3>
+                    <div class="timer-display">
+                        <div class="time-remaining" id="timer-display">{% if ex.duration %}{{ '%d:%02d' % (ex.duration // 60, ex.duration % 60) }}{% else %}--:--{% endif %}</div>
+                        <div class="timer-label" id="timer-label">{% if ex.duration %}Time remaining{% else %}Coach-timed{% endif %}</div>
+                        <div class="timer-progress"><div class="timer-progress-bar"><div class="timer-progress-fill" id="timer-progress"></div></div></div>
+                        <div class="session-status" id="session-status">Verify identity to start</div>
+                    </div>
+                </div>
+
+                <div class="stats-card">
+                    <h3>📊 Result</h3>
+                    <div class="stat-item" style="flex-direction:column;align-items:flex-start">
+                        <div><span class="big-value" id="main-value">0</span><span class="big-unit">{{ ex.unit }}</span></div>
+                        {% if target %}
+                        <div class="target-line">🎯 Your target: {{ '≥' if target.higher_is_better else '≤' }} {{ '%g' % target.value }} {{ target.unit }}</div>
+                        {% endif %}
+                    </div>
+                    {% if ex.metric == 'reps' %}
+                    <div class="stat-item"><div class="stat-label">Not counted (form)</div><div class="stat-value" id="invalid-count">0</div></div>
+                    <div class="stat-item"><div class="stat-label">Form quality</div><div class="stat-value" id="form-percentage">0%</div></div>
+                    <div class="progress-bar"><div class="progress-fill" id="form-progress"></div></div>
+                    {% endif %}
+                    <div class="stat-item" id="meter-row" style="flex-direction:column;align-items:stretch;display:none">
+                        <div style="display:flex;justify-content:space-between;align-items:center">
+                            <div class="stat-label">Form meter</div>
+                            <button id="mirror-btn" class="btn btn-secondary" style="padding:4px 10px;font-size:.8rem" aria-pressed="false">🔈 Audio mirror: off</button>
+                        </div>
+                        <div class="meter" aria-hidden="true"><div id="meter-fill"></div></div>
+                        <div id="mirror-label" style="font-size:.8rem;color:#94a3b8"></div>
+                    </div>
+                    <div class="stat-item"><div class="stat-label">Identity</div><div class="feedback" id="identity-verified">Not verified</div></div>
+                    <div class="stat-item"><div class="stat-label">Feedback</div><div class="feedback" id="feedback">Get ready</div></div>
+                </div>
+
+                <div class="instructions-card">
+                    <h3>📋 How to do it</h3>
+                    <ul>{% for s in ex.setup %}<li>{{ s }}</li>{% endfor %}</ul>
+                    <p style="margin-top:.6rem"><b>How it's scored:</b> {{ ex.counting }}</p>
+                    {% if ex.form_cues %}<p style="margin-top:.6rem"><b>Form tips:</b> {{ ex.form_cues|join(' · ') }}</p>{% endif %}
+                    <div id="adapt-blind" {% if mode != 'blind' %}style="display:none"{% endif %}>
+                        <p style="margin-top:.6rem"><b>🔊 Blind / low-vision adaptations:</b></p>
+                        <ul>{% for s in ex.blind_adaptation %}<li>{{ s }}</li>{% endfor %}
+                            <li>Keyboard: <b>V</b> verify · <b>Space</b> start / stop · <b>I</b> repeat instructions · <b>N</b> next test · <b>M</b> audio mirror on/off</li></ul>
+                    </div>
+                    <div id="adapt-deaf" {% if mode != 'deaf' %}style="display:none"{% endif %}>
+                        <p style="margin-top:.6rem"><b>🖐️ Deaf / hard-of-hearing adaptations:</b></p>
+                        <ul>{% for s in ex.deaf_adaptation %}<li>{{ s }}</li>{% endfor %}</ul>
+                    </div>
+                    {% if ex.key in ['vertical_jump', 'broad_jump', 'sit_and_reach'] %}
+                    <div class="height-row">
+                        <label for="height-input">Your height (cm) - used to convert to cm:</label>
+                        <input id="height-input" type="number" min="100" max="230" step="1" value="{{ height_cm|int }}">
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="result-card" role="dialog" aria-modal="true" aria-labelledby="result-title">
+        <div class="card">
+            <h2 id="result-title">{{ ex.icon }} {{ ex.name }} - result</h2>
+            <div class="big-value" id="result-value" style="margin-top:.6rem">0</div>
+            <div class="rating" id="result-rating"></div>
+            <p id="result-target" style="color:#94a3b8"></p>
+            <p id="result-note" style="color:#fca5a5"></p>
+            <div id="result-extra"></div>
+            <p id="passport-line" style="display:none;margin:.4rem 0 0"><a id="passport-link" href="#" style="color:#67e8f9;font-weight:700">🪪 Verified result card (QR) - share with a coach</a></p>
+            <div class="actions">
+                <a class="btn btn-primary" id="next-btn" href="/tests?mode={{ mode }}">Next test →</a>
+                <button class="btn btn-warning" id="retake-btn">Retake</button>
+                <a class="btn btn-secondary" href="/tests?mode={{ mode }}">All tests</a>
+            </div>
+        </div>
+    </div>
+
+    <div id="sr-live" class="sr-only" aria-live="assertive"></div>
+
+    <script>
+        window.EX = {{ ex|tojson }};
+        window.EX_CTX = {
+            mode: {{ mode|tojson }},
+            verifyUrl: {{ verify_url|tojson }},
+            requireFace: {{ 'true' if require_face else 'false' }},
+            loggedIn: {{ 'true' if athlete else 'false' }},
+            target: {{ target|tojson }}
+        };
+    </script>
+    {% include 'partials/verify_view.html' %}
+    <script src="{{ url_for('static', filename='js/exercise_page.js', v='2') }}"></script>
+</body>
+</html>

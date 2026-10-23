@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}DeepFit - All Fitness Tests{% endblock %}
+
+{% block extra_css %}
+<style>
+    .tests-wrap { max-width: 1200px; margin: 0 auto; padding: 96px 16px 48px; color: #e6f0ff; }
+    .tests-head h1 { font-weight: 800; color: #22d3ee; }
+    .tests-head p { color: #94a3b8; }
+    .mode-bar { display: flex; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }
+    .mode-bar a { flex: 1 1 200px; text-align: center; padding: .7rem; border-radius: 12px; border: 1px solid #334155;
+                  background: #0b1b33; color: #cbd5e1; font-weight: 700; text-decoration: none; }
+    .mode-bar a.active { background: #06b6d4; color: #001018; border-color: #06b6d4; }
+    .progress-box { background: #071730; border: 1px solid #1e3a5f; border-radius: 16px; padding: 1.2rem; margin: 1rem 0 1.5rem; }
+    .progress-track { height: 12px; background: #1e293b; border-radius: 999px; overflow: hidden; margin: .6rem 0; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, #06b6d4, #22c55e); }
+    .next-btn { display: inline-block; margin-top: .5rem; padding: .9rem 1.4rem; border-radius: 12px; font-size: 1.1rem;
+                font-weight: 800; background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; text-decoration: none; }
+    .next-btn:focus-visible, .test-card a:focus-visible { outline: 3px solid #fde047; outline-offset: 2px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+    .test-card { background: #071730; border: 1px solid #1e3a5f; border-radius: 16px; padding: 1.1rem; display: flex;
+                 flex-direction: column; gap: .45rem; }
+    .test-card.done { border-color: #16a34a; }
+    .test-card .icon { font-size: 2rem; }
+    .test-card h3 { font-size: 1.1rem; margin: 0; font-weight: 800; }
+    .badges { display: flex; gap: .3rem; flex-wrap: wrap; }
+    .badge-x { font-size: .72rem; padding: .15rem .5rem; border-radius: 999px; background: #1e293b; color: #cbd5e1; }
+    .badge-x.ki { background: #7c2d12; color: #fed7aa; }
+    .last { font-size: .9rem; color: #a5f3fc; }
+    .rating { font-weight: 800; }
+    .rating.Excellent, .rating.Good { color: #4ade80; } .rating.Fair { color: #fbbf24; } .rating.Needs.work { color: #f87171; }
+    .test-card a.go { margin-top: auto; text-align: center; padding: .65rem; border-radius: 10px; background: #0891b2;
+                      color: #fff; font-weight: 700; text-decoration: none; }
+    .test-card a.go.retake { background: #334155; }
+    .test-card .na { margin-top: auto; font-size: .85rem; color: #94a3b8; }
+    .report { margin-top: 2rem; background: #071730; border: 1px solid #1e3a5f; border-radius: 16px; padding: 1.2rem; }
+    .report table { width: 100%; border-collapse: collapse; }
+    .report th, .report td { padding: .5rem; border-bottom: 1px solid #1e293b; text-align: left; }
+    body.mode-blind .test-card a.go, body.mode-blind .next-btn { font-size: 1.2rem; padding: 1rem; }
+    .coach-box { display: flex; gap: 1.2rem; align-items: center; flex-wrap: wrap; margin: 1rem 0 1.5rem; padding: 1.3rem;
+                 border-radius: 16px; border: 1px solid #7c3aed; background: linear-gradient(135deg, #1e1145, #071730); }
+    .coach-box .big-icon { font-size: 3rem; }
+    .coach-btn { display: inline-block; padding: .9rem 1.6rem; border-radius: 12px; font-size: 1.15rem; font-weight: 800;
+                 background: linear-gradient(135deg, #8b5cf6, #6d28d9); color: #fff; text-decoration: none; }
+    .coach-btn:focus-visible { outline: 3px solid #fde047; outline-offset: 2px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tests-wrap" id="tests-root">
+    <div class="tests-head">
+        <h1>🏅 Fitness Tests</h1>
+        {% if athlete %}
+        <p>Athlete: <b>{{ athlete.name }}</b>{% if athlete.age %} · Age {{ athlete.age }}{% endif %}{% if athlete.gender %} · {{ athlete.gender }}{% endif %}.
+           Each test checks your face first, then counts automatically with the camera.</p>
+        {% else %}
+        <p style="color:#fca5a5">Please <a href="/login" style="color:#67e8f9">log in</a> or register to take the tests.</p>
+        {% endif %}
+    </div>
+
+    <nav class="mode-bar" aria-label="Accessibility mode">
+        <a href="/tests?mode=standard" class="{{ 'active' if mode == 'standard' }}" aria-current="{{ 'true' if mode == 'standard' else 'false' }}">👁️ Standard</a>
+        <a href="/tests?mode=blind" class="{{ 'active' if mode == 'blind' }}" aria-current="{{ 'true' if mode == 'blind' else 'false' }}">🔊 Blind / low vision - audio guide</a>
+        <a href="/tests?mode=deaf" class="{{ 'active' if mode == 'deaf' }}" aria-current="{{ 'true' if mode == 'deaf' else 'false' }}">🖐️ Deaf / hard of hearing - visual cues</a>
+    </nav>
+
+    {% if athlete and hp %}
+    <section class="progress-box" aria-labelledby="hp-title" style="display:flex;gap:1rem;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px">
+            <h2 id="hp-title" style="font-size:1.1rem;margin:0;color:#67e8f9;text-transform:uppercase;letter-spacing:.05em">Hidden Potential Index
+                {% if hp.late_bloomer %}<span style="font-size:.75rem;background:#fbbf24;color:#3b2600;padding:.2rem .5rem;border-radius:999px;margin-left:.4rem">LATE BLOOMER</span>{% endif %}</h2>
+            <p style="margin:.4rem 0 0;color:#cbd5e1">{{ hp.summary }}</p>
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem">
+                <span class="badge-x">Fitness today: {{ '%.0f' % hp.fitness_today if hp.fitness_today is not none else '–' }}</span>
+                <span class="badge-x">Maturity: {{ hp.maturity.status if hp.maturity else '–' }}</span>
+                <span class="badge-x">Coachability: {{ '%.0f' % hp.coachability if hp.coachability is not none else '–' }}</span>
+            </div>
+            <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.8rem">
+                <a class="next-btn" style="background:#13305a;font-size:1rem;padding:.7rem 1rem" href="/potential?mode={{ mode }}">See full report</a>
+                <a class="next-btn" style="background:#334155;font-size:1rem;padding:.7rem 1rem" href="{{ passport_url }}">🪪 My Talent Passport</a>
+            </div>
+        </div>
+        <div style="font-size:3.2rem;font-weight:800;color:#22d3ee">{{ '%.0f' % hp.index if hp.index is not none else '–' }}</div>
+    </section>
+    {% endif %}
+
+
+    {% set coach = (cards | selectattr('key', 'equalto', 'coachability') | list | first) %}
+    {% if coach %}
+    <section class="coach-box" aria-labelledby="coach-title">
+        <div class="big-icon" aria-hidden="true">🧠</div>
+        <div style="flex:1;min-width:240px">
+            <h2 id="coach-title" style="font-size:1.25rem;margin:0;color:#c4b5fd">Coachability Challenge</h2>
+            <p style="margin:.35rem 0 0;color:#cbd5e1">Learn a new 5-move pattern in 5 tries, with one tip after each try.
+               It measures how fast you <b>learn</b> - the part of talent other tests miss.</p>
+            {% if coach.last %}
+            <p style="margin:.4rem 0 0;color:#a5f3fc">Last score: <b>{{ coach.last.value|round(0)|int if coach.last.value is number else coach.last.value }} pts</b>
+                {% if coach.last.rating %}· <span class="rating {{ coach.last.rating }}">{{ coach.last.rating }}</span>{% endif %}
+                <span style="color:#64748b">({{ coach.last.when }})</span></p>
+            {% endif %}
+        </div>
+        {% if athlete %}
+        <a class="coach-btn" href="{{ coach.url }}">{{ '🔁 Retake' if coach.last else '▶ Start' }} Coachability Challenge</a>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if athlete %}
+    <section class="progress-box" aria-labelledby="progress-title">
+        <h2 id="progress-title" style="font-size:1.2rem;margin:0">Your progress: {{ done }} of {{ total }} tests done</h2>
+        <div class="progress-track"><div class="progress-fill" style="width: {{ (100 * done / total)|round|int }}%"></div></div>
+        {% if next_test %}
+        <p style="margin:.4rem 0 0">Recommended next test (Khelo India order first):</p>
+        <a class="next-btn" href="{{ next_test.url }}" id="next-test-link">▶ Start: {{ next_test.name }}</a>
+        {% else %}
+        <p style="margin:.4rem 0 0">🎉 You've completed every test. See your report below, or ask the AI Coach about it.</p>
+        {% endif %}
+        {% if mode == 'blind' %}
+        <button class="next-btn" style="background:#334155;border:0" id="read-progress">🔊 Read my progress aloud</button>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    <div class="grid" role="list">
+        {% for c in cards if c.key != 'coachability' %}
+        <article class="test-card {{ 'done' if c.last }}" role="listitem" aria-label="{{ c.name }}">
+            <div class="icon" aria-hidden="true">{{ c.icon }}</div>
+            <h3>{{ c.name }}</h3>
+            <div class="badges">
+                {% if c.khelo_india %}<span class="badge-x ki">Khelo India</span>{% endif %}
+                <span class="badge-x">{{ c.category }}</span>
+                {% if c.camera == 'none' %}<span class="badge-x">coach-timed</span>{% else %}<span class="badge-x">camera: {{ c.camera }}</span>{% endif %}
+            </div>
+            {% if c.last %}
+            <div class="last">Last: <b>{{ c.last.value|round(1) if c.last.value is number else c.last.value }} {{ c.last.unit }}</b>
+                {% if c.last.rating %}· <span class="rating {{ c.last.rating }}">{{ c.last.rating }}</span>{% endif %}
+                <span style="color:#64748b">({{ c.last.when }})</span></div>
+            {% endif %}
+            {% if c.available %}
+            <a class="go {{ 'retake' if c.last }}" href="{{ c.url }}">{{ 'Retake' if c.last else 'Start' }} {{ c.name }}</a>
+            {% else %}
+            <div class="na">Needs a standard account (uses the existing height & weight page).</div>
+            {% endif %}
+        </article>
+        {% endfor %}
+    </div>
+
+    {% if athlete and done %}
+    <section class="report" aria-labelledby="report-title">
+        <h2 id="report-title" style="font-size:1.2rem">📄 Report</h2>
+        <table>
+            <thead><tr><th>Test</th><th>Result</th><th>Rating</th><th>Date</th></tr></thead>
+            <tbody>
+            {% for c in cards if c.last %}
+            <tr><td>{{ c.icon }} {{ c.name }}</td>
+                <td>{{ c.last.value|round(1) if c.last.value is number else c.last.value }} {{ c.last.unit }}</td>
+                <td class="rating {{ c.last.rating }}">{{ c.last.rating or '-' }}</td>
+                <td>{{ c.last.when }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        <p style="color:#94a3b8;margin-top:.8rem">Ratings use starter benchmarks (set low on purpose) until real field data is collected.
+           Ask the AI Coach (bottom-right) "How did I do?" for advice.</p>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.body.classList.add('mode-{{ mode }}');
+    try { localStorage.setItem('deepfit_mode', '{{ mode }}'); } catch (e) { }
+    const rp = document.getElementById('read-progress');
+    if (rp) rp.addEventListener('click', () => {
+        const done = [...document.querySelectorAll('.test-card.done h3')].map(h => h.textContent);
+        const next = document.getElementById('next-test-link');
+        const text = `You have done {{ done }} of {{ total }} tests. ` + (done.length ? `Done: ${done.join(', ')}. ` : '') +
+            (next ? `${next.textContent.replace('▶', '')}. Press Enter to start it.` : 'All tests are complete.');
+        speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+        if (next) next.focus();
+    });
+</script>
+{% endblock %}

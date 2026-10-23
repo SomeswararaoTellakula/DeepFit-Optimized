@@ -1,0 +1,5 @@
+Athlete_ID,Name,Age,Gender,Height_cm,Weight_kg,Situps_per_min,Vertical_Jump_cm,Dumbbell_Curl_per_min,Partial_Curlup_per_min,Pushups_per_min,Modified_Pushups_per_min,Plank_s,Squats_per_min,Jumping_Jacks_per_min,Broad_Jump_cm,Sit_Reach_cm,Flamingo_falls,Plate_Tapping_s,Dash_50m_s,Run_600m_s
+1,Athlete_1,20,M,174.94,68.3,3,5,3,5,3,3,15,10,15,60,-8,12,35,13,330
+2,Athlete_2,32,F,188.0,70.0,4,4,5,5,3,3,15,10,15,60,-8,12,35,13,330
+3,Athlete_3,28,M,151.0,69.0,4,5,4,5,3,3,15,10,15,60,-8,12,35,13,330
+3,Athlete_3,28,M,178.0,69.0,4,5,4,5,3,3,15,10,15,60,-8,12,35,13,330

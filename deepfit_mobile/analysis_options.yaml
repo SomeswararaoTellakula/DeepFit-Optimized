@@ -1,0 +1,10 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - test/fixtures/**
+
+linter:
+  rules:
+    prefer_interpolation_to_compose_strings: false
+    avoid_print: true

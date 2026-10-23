@@ -1,0 +1,37 @@
+{
+  "height": {
+    "mae": 27.6392545616041,
+    "rmse": 32.355120340866726,
+    "r2": -11.111677315262511,
+    "mean_error": 27.6392545616041,
+    "std_error": 16.820387021433678,
+    "median_error": 25.67846792528634,
+    "max_error": 75.70619549671187,
+    "within_1cm": 2.0,
+    "within_2cm": 3.0,
+    "within_3cm": 4.5,
+    "within_5cm": 7.000000000000001
+  },
+  "weight": {
+    "mae": 23.70580889507771,
+    "rmse": 31.543153990988525,
+    "r2": -2.7481017169166173,
+    "mean_error": 23.70580889507771,
+    "std_error": 20.808776713907772,
+    "median_error": 17.79346041346153,
+    "max_error": 117.43569115175738,
+    "within_1kg": 0.5,
+    "within_2kg": 3.5000000000000004,
+    "within_3kg": 6.5,
+    "within_5kg": 13.0
+  },
+  "overall": {
+    "mean_confidence": 0.6044503430480455,
+    "std_confidence": 0.12176611089823217,
+    "mean_processing_time_ms": 152.36667438685615,
+    "std_processing_time_ms": 31.247610036020234,
+    "total_subjects": 200,
+    "successful_predictions": 200,
+    "success_rate": 100.0
+  }
+}

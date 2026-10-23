@@ -1,0 +1,29 @@
+<style>
+    :root { --bg:#071428; --card:#0b1b33; --card2:#0b1f3d; --line:#1e3a5f; --text:#e6f0ff; --muted:#94a3b8;
+            --cyan:#22d3ee; --green:#4ade80; --amber:#fbbf24; --red:#f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, system-ui, -apple-system, sans-serif; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.6rem; margin: .2rem 0 .3rem; }
+    .muted { color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px; margin-top: 14px; }
+    .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    @media (max-width: 520px) { .grid3 { grid-template-columns: 1fr; } }
+    .stat { background: var(--bg); border-radius: 12px; padding: 12px; }
+    .stat .k { font-size: .8rem; color: var(--muted); } .stat .v { font-size: 1.3rem; font-weight: 800; }
+    .big { font-size: 3rem; font-weight: 800; line-height: 1; color: var(--cyan); }
+    .badge { display: inline-block; padding: .3rem .7rem; border-radius: 999px; font-weight: 800; font-size: .8rem; }
+    .ok { background: #14532d; color: #bbf7d0; } .bad { background: #7f1d1d; color: #fecaca; } .warn { background: #78350f; color: #fde68a; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 18px;
+           border-radius: 12px; background: #06b6d4; color: #032530; font-weight: 800; text-decoration: none; border: 0; cursor: pointer; }
+    .btn.secondary { background: #1f2937; color: var(--text); }
+    .btn:focus-visible, a:focus-visible { outline: 3px solid #fde047; outline-offset: 2px; }
+    a { color: var(--cyan); }
+    .bar { height: 10px; border-radius: 999px; background: #1e293b; overflow: hidden; margin-top: 6px; }
+    .bar > div { height: 100%; border-radius: 999px; }
+    table { width: 100%; border-collapse: collapse; } th, td { padding: .55rem .4rem; border-bottom: 1px solid #1e293b; text-align: left; }
+    .qr { background: #fff; padding: 10px; border-radius: 12px; width: 160px; height: 160px; }
+    .qr img, .qr canvas { width: 140px !important; height: 140px !important; }
+    .rating-Excellent, .rating-Good { color: var(--green); } .rating-Fair { color: var(--amber); } .rating-Needs { color: var(--red); }
+</style>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit Talent Passport - {{ p.exercise_name }}</title>
+    {% include 'partials/df_page_style.html' %}
+</head>
+<body>
+<main class="wrap">
+    {% set back_href = athlete_url %}
+    {% include 'partials/back_nav.html' %}
+    {% if scanned %}
+    <section role="status" style="margin:4px 0 14px;padding:22px;border-radius:18px;text-align:center;
+             background:{{ '#052e16' if valid else '#450a0a' }};border:3px solid {{ '#22c55e' if valid else '#ef4444' }}">
+        <div style="font-size:2.4rem;font-weight:900;color:{{ '#4ade80' if valid else '#f87171' }}">
+            {{ '✓ VERIFIED by DeepFit server' if valid else '✗ NOT VALID - do not trust this result' }}</div>
+        <div style="margin-top:6px;font-size:1.05rem">Checked just now: <b>{{ checked_at }}</b></div>
+        <div class="muted" style="margin-top:6px">{{ 'This is the original record. Its digital signature was re-checked the moment you scanned the code - if it matches what you were shown, the result is genuine.' if valid else 'The record was changed after DeepFit signed it.' }}</div>
+    </section>
+    {% endif %}
+    <div class="muted" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.8rem">DeepFit Talent Passport</div>
+    <h1>{{ p.exercise_name }}</h1>
+
+    {% if valid %}
+    <div class="card" style="border-color:#16a34a">
+        <div class="row"><span class="badge ok">✓ VERIFIED</span>
+            <span>This result is exactly as recorded by DeepFit - nothing has been edited since.</span></div>
+    </div>
+    {% else %}
+    <div class="card" style="border-color:#dc2626" role="alert">
+        <div class="row"><span class="badge bad">✗ NOT VALID</span><span>Do not trust this result:</span></div>
+        <ul>{% for x in problems %}<li>{{ x }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+
+    <div class="card">
+        <div class="row" style="justify-content:space-between">
+            <div>
+                <div class="muted">Athlete</div>
+                <div style="font-size:1.25rem;font-weight:800">{{ p.athlete_display }}</div>
+                <div class="muted">{% if p.age %}Age {{ p.age }}{% endif %}{% if p.gender %} · {{ p.gender }}{% endif %} · {{ p.mode }} mode</div>
+            </div>
+            <div style="text-align:right">
+                <div class="big">{{ ('%g' % p.value) if p.value is number else p.value }}<span style="font-size:1rem;color:var(--muted)"> {{ p.unit }}</span></div>
+                {% if rating %}<div class="rating-{{ rating.split(' ')[0] }}" style="font-weight:800">{{ rating }}{% if target is not none %} · target {{ '%g' % target }} {{ p.unit }}{% endif %}</div>{% endif %}
+            </div>
+        </div>
+        <div class="muted" style="margin-top:8px">Recorded {{ p.timestamp|replace('T', ' ')|replace('Z', ' UTC') }}{% if p.coach_timed %} · coach-timed with stopwatch{% endif %}</div>
+    </div>
+
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">Identity evidence</h2>
+        <div class="grid3">
+            <div class="stat"><div class="k">Before the test</div>
+                <div class="v" style="font-size:1rem">{{ p.identity.pre_check }}</div>
+                {% if p.identity.pre_check_score is not none %}<div class="k">match score {{ '%.2f' % p.identity.pre_check_score }} (pass ≥ 0.40)</div>{% endif %}</div>
+            <div class="stat"><div class="k">Live re-checks during the test</div>
+                <div class="v">{{ p.identity.live_passes }} / {{ p.identity.live_checks }}</div><div class="k">matched the same face</div></div>
+            <div class="stat"><div class="k">Mismatch strikes</div>
+                <div class="v" style="color:{{ 'var(--green)' if p.identity.mismatch_strikes == 0 else 'var(--amber)' }}">{{ p.identity.mismatch_strikes }}</div>
+                <div class="k">3 strikes stop the test</div></div>
+        </div>
+        {% if p.identity.captured_on %}<div class="muted" style="margin-top:10px">📱 Captured on the {{ p.identity.captured_on }}.</div>{% endif %}
+    </div>
+
+    {% if coach %}
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">Coachability details</h2>
+        <div class="muted">Errors per try (pattern {{ coach.pattern_code }}): <b style="color:var(--text)">{{ coach.errors_per_try|join(' → ') }}</b>
+            · errors fell {{ coach.reduction_pct or 0 }}% · percentile {{ coach.percentile }} ({{ coach.percentile_note }})</div>
+    </div>
+    {% endif %}
+    {% if maturity %}
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">Growth details</h2>
+        <div class="muted">Sitting height {{ maturity.sitting_height_cm }} cm · leg length {{ maturity.leg_length_cm }} cm ·
+            maturity offset {{ maturity.maturity_offset }} yrs ({{ maturity.status }} developer). {{ maturity.note }}</div>
+    </div>
+    {% endif %}
+
+    {% if has_replay %}
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 6px">Movement replay <span class="muted" style="font-weight:400;font-size:.85rem">(skeleton only - no video or face is stored)</span></h2>
+        <canvas id="replay" width="640" height="480" style="width:100%;background:#020b18;border-radius:12px" role="img" aria-label="Skeleton replay of the test"></canvas>
+        <div class="row" style="margin-top:10px">
+            <button class="btn" id="play">▶ Play</button>
+            <input type="range" id="scrub" min="0" value="0" style="flex:1" aria-label="Replay position">
+            <span id="clock" class="muted">0.0 s</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="card row" style="justify-content:space-between">
+        <div style="max-width:420px">
+            <h2 style="font-size:1.05rem;margin:0 0 6px">Share or verify</h2>
+            <p class="muted" style="margin:0 0 10px">Scan this code to open this page. The page re-checks the digital signature
+                (HMAC-SHA256) against DeepFit's records every time it is opened.</p>
+            <a class="btn secondary" href="{{ athlete_url }}">All verified results of this athlete</a>
+            <a class="btn" href="{{ card_url }}" style="margin-left:8px">🖨️ Printable result card</a>
+        </div>
+        <div style="text-align:center"><div class="qr" id="qr" aria-label="QR code for this page"></div><div class="muted" style="font-size:.72rem;max-width:180px;word-break:break-all;margin-top:6px">{{ share_url or '' }}</div></div>
+    </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+    // QR code: browser library (online) -> server-made SVG (offline, needs segno) -> plain link
+    (function () {
+        const SHARE = {{ (share_url or '')|tojson }} || location.href;
+        const QRT = SHARE.split('?')[0] + '?scan=1';   // the scanner sees the VERIFIED banner   // LAN / public address, never 'localhost'
+        const box = document.getElementById('qr');
+        try { new QRCode(box, { text: QRT, width: 140, height: 140 }); return; } catch (e) { }
+        const img = new Image(140, 140);
+        img.alt = 'QR code for this page';
+        img.src = '/qr.svg?data=' + encodeURIComponent(QRT);
+        img.onerror = () => { box.style.cssText = 'width:auto;height:auto;background:none;padding:0';
+                              box.innerHTML = '<span style="font-size:.75rem;word-break:break-all;color:#94a3b8"></span>';
+                              box.firstChild.textContent = SHARE; };
+        box.appendChild(img);
+    })();
+</script>
+{% if has_replay %}
+<script>
+(function () {
+    const C = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],
+               [27,29],[29,31],[27,31],[28,30],[30,32],[28,32],[15,19],[16,20]];
+    const cv = document.getElementById('replay'), g = cv.getContext('2d');
+    const play = document.getElementById('play'), scrub = document.getElementById('scrub'), clock = document.getElementById('clock');
+    let data = null, i = 0, timer = null;
+    fetch({{ replay_url|tojson }}).then(r => r.json()).then(d => { data = d; scrub.max = d.frames.length - 1; draw(0); });
+    function draw(k) {
+        if (!data || !data.frames.length) return;
+        const f = data.frames[k], W = cv.width, H = cv.height;
+        g.fillStyle = '#020b18'; g.fillRect(0, 0, W, H);
+        const P = f.lm.map(p => [p[0] * W, p[1] * H, p[2]]);
+        g.lineWidth = 4; g.strokeStyle = '#42c8f5'; g.lineCap = 'round';
+        for (const [a, b] of C) {
+            if (P[a][2] < 0.4 || P[b][2] < 0.4) continue;
+            g.beginPath(); g.moveTo(P[a][0], P[a][1]); g.lineTo(P[b][0], P[b][1]); g.stroke();
+        }
+        if (P[0][2] > 0.4) {   // head as a plain circle (no facial points)
+            const r = Math.max(14, Math.hypot(P[11][0] - P[12][0], P[11][1] - P[12][1]) * 0.35);
+            g.beginPath(); g.arc(P[0][0], P[0][1], r, 0, Math.PI * 2); g.stroke();
+        }
+        const label = {{ p.exercise_name|tojson }} + ': ' + f.v + ' ' + {{ p.unit|tojson }};
+        g.font = 'bold 20px Inter, sans-serif';
+        g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(10, 10, g.measureText(label).width + 20, 36);
+        g.fillStyle = '#fff'; g.fillText(label, 20, 35);
+        clock.textContent = f.t.toFixed(1) + ' s'; scrub.value = k;
+    }
+    play.addEventListener('click', () => {
+        if (timer) { clearInterval(timer); timer = null; play.textContent = '▶ Play'; return; }
+        if (i >= data.frames.length - 1) i = 0;
+        play.textContent = '❚❚ Pause';
+        timer = setInterval(() => { draw(i); i++; if (i >= data.frames.length) { clearInterval(timer); timer = null; play.textContent = '▶ Play'; } },
+                            1000 / (data.fps || 10));
+    });
+    scrub.addEventListener('input', () => { i = Number(scrub.value); draw(i); });
+})();
+</script>
+{% endif %}
+</body>
+</html>

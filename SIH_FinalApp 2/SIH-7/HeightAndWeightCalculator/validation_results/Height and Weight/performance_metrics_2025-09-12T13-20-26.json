@@ -1,0 +1,12 @@
+{
+    "timestamp": "2025-09-12T13-20-26",
+    "height_cm": 180.4042762493002,
+    "weight_kg": 74.18064366219495,
+    "confidence_score": 0.492,
+    "uncertainty_height": 1.0,
+    "uncertainty_weight": 2.0,
+    "processing_time_ms": 280.0018787384033,
+    "detection_status": "good_position",
+    "calibration_quality": 999.0,
+    "bmi": 22.79276127945908
+}

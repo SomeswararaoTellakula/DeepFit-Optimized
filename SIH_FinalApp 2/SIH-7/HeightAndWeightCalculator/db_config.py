@@ -1,0 +1,69 @@
+import os
+from pymongo import MongoClient
+import urllib.parse
+
+# Store global references to the connection so we don't spam reconnects
+_mongo_client = None
+_mongo_db = None
+
+def clean_mongo_uri(uri):
+    """Automatically URL-encodes the username and password in a MongoDB URI"""
+    if not uri or (not uri.startswith("mongodb+srv://") and not uri.startswith("mongodb://")):
+        return uri
+        
+    prefix = "mongodb+srv://" if uri.startswith("mongodb+srv://") else "mongodb://"
+    rest = uri[len(prefix):]
+    
+    if "@" in rest:
+        # The last @ separates credentials from host
+        last_at_index = rest.rfind("@")
+        credentials = rest[:last_at_index]
+        host_and_options = rest[last_at_index:]
+        
+        if ":" in credentials:
+            user, password = credentials.split(":", 1)
+            # Safely encode the user and password, handling if they are already encoded
+            encoded_user = urllib.parse.quote_plus(urllib.parse.unquote_plus(user))
+            encoded_password = urllib.parse.quote_plus(urllib.parse.unquote_plus(password))
+            return f"{prefix}{encoded_user}:{encoded_password}{host_and_options}"
+    return uri
+
+def connect_mongodb():
+    global _mongo_client, _mongo_db
+    
+    # If already connected, return the existing connection
+    if _mongo_client is not None and _mongo_db is not None:
+        try:
+            # Quick ping to ensure connection is still alive
+            _mongo_client.admin.command('ping')
+            return _mongo_client, _mongo_db
+        except Exception:
+            _mongo_client = None
+            _mongo_db = None
+
+    raw_uri = os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/')
+    uri = clean_mongo_uri(raw_uri)
+    
+    try:
+        print(f"🔗 Attempting to connect to MongoDB at: {uri.split('@')[-1] if '@' in uri else uri}")
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        
+        # This will raise an exception if the server is not reachable
+        client.admin.command('ping')
+        
+        print("✅ Successfully connected to real MongoDB!")
+        
+        _mongo_client = client
+        _mongo_db = client['sih2573']
+        
+        return _mongo_client, _mongo_db
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: Failed to connect to real MongoDB! Error: {e}")
+        print("Please ensure your MONGODB_URI environment variable is set correctly in Hugging Face Settings -> Variables.")
+        # We explicitly raise the error here because the user wants NO mock db.
+        # The app should fail if there's no DB.
+        raise RuntimeError(f"MongoDB Connection Required: {e}")
+
+def get_db():
+    _, db = connect_mongodb()
+    return db

@@ -1,0 +1,17 @@
+# secrets
+.env
+**/.env
+*.env.bak
+
+# environments & caches
+venv/
+venv*/
+.venv/
+**/venv*/
+__pycache__/
+*.pyc
+.DS_Store
+
+# runtime data
+**/logs/
+**/uploads/

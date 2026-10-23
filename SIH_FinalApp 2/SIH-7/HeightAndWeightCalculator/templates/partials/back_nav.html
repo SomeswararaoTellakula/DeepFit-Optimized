@@ -1,0 +1,35 @@
+{# Back + Home buttons for DeepFit's standalone pages.
+   Set back_href before including: where "Back" goes when there is no sensible previous page
+   (opened from a QR code, after a reload, or coming back from this page's own printable card). #}
+{% set _logged_in = session.get('user_id') or session.get('blind_user_id') %}
+<nav class="row" style="justify-content:space-between;margin-bottom:14px" aria-label="Page navigation">
+    <a class="btn secondary" id="df-back" href="{{ back_href|default('/tests' if _logged_in else '/') }}" style="min-height:40px">← Back</a>
+    {% if _logged_in %}
+    <a class="btn secondary" href="/tests" style="min-height:40px">🏠 All tests</a>
+    {% else %}
+    <a class="btn secondary" href="/" style="min-height:40px">🏠 DeepFit home</a>
+    {% endif %}
+</nav>
+<script>
+    (function () {
+        // Use the browser history only when the previous page is another DeepFit page that is
+        // not this page itself or one of its sub-pages (e.g. its printable card) - otherwise two
+        // pages would send you back and forth forever. In every other case follow the link.
+        var b = document.getElementById('df-back'), KEY = 'dfBackViaLink';
+        b.addEventListener('click', function (e) {
+            try {
+                // we came here through a "Back" link (not history): don't bounce back to that page
+                var cameByLink = sessionStorage.getItem(KEY) === location.pathname;
+                sessionStorage.removeItem(KEY);
+                var ref = document.referrer ? new URL(document.referrer) : null;
+                if (!cameByLink && ref && history.length > 1 && ref.host === location.host &&
+                    ref.pathname !== location.pathname && ref.pathname.indexOf(location.pathname + '/') !== 0) {
+                    e.preventDefault();
+                    history.back();
+                    return;
+                }
+                sessionStorage.setItem(KEY, new URL(b.href, location.href).pathname);
+            } catch (err) { /* follow the link */ }
+        });
+    })();
+</script>
