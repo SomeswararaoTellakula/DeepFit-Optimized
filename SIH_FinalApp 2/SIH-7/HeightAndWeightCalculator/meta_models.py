@@ -147,11 +147,13 @@ LANG_NAMES = {"en": "English", "hi": "Hindi", "te": "Telugu", "ta": "Tamil", "kn
 
 
 def transcribe(wav_bytes: bytes, langs: Optional[List[str]] = None, timeout: float = 30.0) -> Optional[str]:
-    """Transcript of a short WAV clip: Muse Voice Transcribe, falling back to Whisper on Groq."""
+    """Transcript of a short WAV clip: Muse Voice Transcribe, then Whisper on Groq, then Gemini."""
     text = _meta_transcribe(wav_bytes, langs, timeout)
     if text is None:
         import llm
         text = llm.groq_transcribe(wav_bytes, (langs or [None])[0], timeout)
+        if text is None:
+            text = llm.gemini_transcribe(wav_bytes, (langs or [None])[0], timeout)
         if text is not None:
             last_error["asr"] = None
     return text

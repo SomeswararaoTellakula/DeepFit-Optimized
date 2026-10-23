@@ -9,6 +9,9 @@
 //   Heart Scan    (x2, camera PPG)   -> heart-rate recovery
 //   Read the Bowler (night stadium)  -> anticipation (occlusion test: the floodlights go out)
 //   Dance-off     (disco stage)      -> learning speed
+// Upper-body mode: when only the waist up is in view (laptop, phone propped close) the game plays
+// Shadow Boxing, Heart Scan, Read the Bowler (by leaning), Dance-off and the final scan, then
+// offers the full-body levels as a bonus. Traits it could not measure are "not measured", not zero.
 // The server recomputes every score AND the game points from the raw measurements
 // (arena_score.py), so the leaderboard can't be faked by editing this file.
 
@@ -33,6 +36,17 @@ const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarke
 const I18N = {
   en: {
     calib: 'Step back until your whole body is in the frame, then stand still.',
+    calib_auto: 'Step back so your whole body is in the frame for all levels - or stay where you are for the upper-body game.',
+    calib_upper: 'Keep your head, shoulders and arms in the frame, then stay still.',
+    upper_mode: 'UPPER-BODY GAME! Your legs are not in view, so we play the upper-body levels.',
+    feet_hint: 'Step back - this level needs your feet in the picture.',
+    step_back_upper: 'Now sit back so your head, shoulders and arms are in the frame.',
+    boxing_intro: 'Shadow Boxing! Punch the pads as fast as you can - left or right.',
+    pow: 'POW!',
+    bonus_title: 'UNLOCK 3 BONUS LEVELS?', bonus_text: 'Raider Dodge, Log Jump and Bull Run measure reflexes, agility and power. They need your whole body in view - step back from the camera.',
+    bonus_yes: 'Yes - play the bonus levels', bonus_no: 'Show my results',
+    bonus_say: 'Great run! Want 3 bonus levels? They need your whole body in view. Say yes, or say results.',
+    scope_upper: 'Measured: upper body', scope_full: 'Measured: full body', not_measured: 'not measured',
     calib_ok: 'Ready!',
     dodge_intro: 'Raider Dodge! When a raider charges from one side, step quickly to the other side.',
     center: 'Come back to the middle.',
@@ -50,12 +64,23 @@ const I18N = {
     try_tip: (n, e, k, mv) => `Try ${n}: ${e} mistakes. Remember step ${k}: ${mv}.`,
     results: 'Game over! Here is your score and your hidden talent profile.', left: 'left', right: 'right',
     level: 'LEVEL', clear: 'LEVEL CLEAR!', escaped: 'ESCAPED!', phew: 'PHEW! CLOSE ONE!', lights: 'LIGHTS OUT!', heart_ok: 'HEART SCANNED!',
-    titles: { dodge: 'RAIDER DODGE', jump: 'LOG JUMP', escape: 'BULL RUN', pulse: 'HEART SCAN', bowler: 'READ THE BOWLER', combo: 'DANCE-OFF' },
-    measures: { dodge: 'Secretly measures: reflexes + agility', jump: 'Secretly measures: leg power', escape: 'Gets your heart pumping',
+    titles: { dodge: 'RAIDER DODGE', jump: 'LOG JUMP', escape: 'BULL RUN', pulse: 'HEART SCAN', bowler: 'READ THE BOWLER', combo: 'DANCE-OFF', boxing: 'SHADOW BOXING' },
+    measures: { boxing: 'Gets your heart pumping', dodge: 'Secretly measures: reflexes + agility', jump: 'Secretly measures: leg power', escape: 'Gets your heart pumping',
                 pulse: 'Secretly measures: heart recovery', bowler: 'Secretly measures: game reading', combo: 'Secretly measures: learning speed' },
   },
   hi: {
     calib: 'पीछे हटिए ताकि आपका पूरा शरीर फ्रेम में दिखे, फिर स्थिर खड़े रहिए।',
+    calib_auto: 'सारे लेवल के लिए पीछे हटिए ताकि पूरा शरीर दिखे - या जहाँ हैं वहीं रहिए, ऊपरी शरीर वाले खेल के लिए।',
+    calib_upper: 'सिर, कंधे और हाथ फ्रेम में रखिए, फिर स्थिर रहिए।',
+    upper_mode: 'ऊपरी शरीर का खेल! आपके पैर नहीं दिख रहे, इसलिए हम ऊपरी शरीर वाले लेवल खेलेंगे।',
+    feet_hint: 'पीछे हटिए - इस लेवल में पैर दिखने चाहिए।',
+    step_back_upper: 'अब पीछे बैठिए ताकि सिर, कंधे और हाथ फ्रेम में दिखें।',
+    boxing_intro: 'शैडो बॉक्सिंग! जितनी तेज़ी से हो सके पैड पर मुक्का मारो - बाएँ या दाएँ।',
+    pow: 'धमाक!',
+    bonus_title: '3 बोनस लेवल खोलें?', bonus_text: 'रेडर से बचो, लकड़ी कूदो और सांड दौड़ - प्रतिक्रिया, फुर्ती और ताकत मापते हैं। इनमें पूरा शरीर दिखना चाहिए - कैमरे से पीछे हटिए।',
+    bonus_yes: 'हाँ - बोनस लेवल खेलो', bonus_no: 'मेरे नतीजे दिखाओ',
+    bonus_say: 'शानदार खेल! 3 बोनस लेवल खेलना चाहोगे? इनमें पूरा शरीर दिखना चाहिए। हाँ बोलो, या नतीजे बोलो।',
+    scope_upper: 'मापा गया: ऊपरी शरीर', scope_full: 'मापा गया: पूरा शरीर', not_measured: 'मापा नहीं गया',
     calib_ok: 'तैयार!',
     dodge_intro: 'रेडर से बचो! जब रेडर एक तरफ से आए, तुरंत दूसरी तरफ कदम रखो।',
     center: 'बीच में वापस आओ।',
@@ -73,12 +98,23 @@ const I18N = {
     try_tip: (n, e, k, mv) => `प्रयास ${n}: ${e} गलतियाँ। कदम ${k} याद रखो: ${mv}।`,
     results: 'खेल खत्म! यह रहा आपका स्कोर और आपकी छुपी प्रतिभा।', left: 'बाएँ', right: 'दाएँ',
     level: 'लेवल', clear: 'लेवल पूरा!', escaped: 'बच निकले!', phew: 'बाल-बाल बचे!', lights: 'लाइटें बंद!', heart_ok: 'दिल की जाँच पूरी!',
-    titles: { dodge: 'रेडर से बचो', jump: 'लकड़ी कूदो', escape: 'सांड दौड़', pulse: 'हार्ट स्कैन', bowler: 'गेंदबाज़ को पढ़ो', combo: 'डांस मुकाबला' },
-    measures: { dodge: 'छुपा माप: प्रतिक्रिया + फुर्ती', jump: 'छुपा माप: पैरों की ताकत', escape: 'दिल की धड़कन बढ़ाता है',
+    titles: { dodge: 'रेडर से बचो', jump: 'लकड़ी कूदो', escape: 'सांड दौड़', pulse: 'हार्ट स्कैन', bowler: 'गेंदबाज़ को पढ़ो', combo: 'डांस मुकाबला', boxing: 'शैडो बॉक्सिंग' },
+    measures: { boxing: 'दिल की धड़कन बढ़ाता है', dodge: 'छुपा माप: प्रतिक्रिया + फुर्ती', jump: 'छुपा माप: पैरों की ताकत', escape: 'दिल की धड़कन बढ़ाता है',
                 pulse: 'छुपा माप: दिल की रिकवरी', bowler: 'छुपा माप: खेल की समझ', combo: 'छुपा माप: सीखने की गति' },
   },
   te: {
     calib: 'మీ శరీరం మొత్తం ఫ్రేమ్‌లో కనిపించేలా వెనక్కి వెళ్లి, కదలకుండా నిలబడండి.',
+    calib_auto: 'అన్ని లెవెల్స్ కోసం శరీరం మొత్తం కనిపించేలా వెనక్కి వెళ్లండి - లేదా పై శరీర ఆట కోసం అక్కడే ఉండండి.',
+    calib_upper: 'తల, భుజాలు, చేతులు ఫ్రేమ్‌లో ఉంచి కదలకుండా ఉండండి.',
+    upper_mode: 'పై శరీర ఆట! మీ కాళ్లు కనిపించడం లేదు, కాబట్టి పై శరీర లెవెల్స్ ఆడుదాం.',
+    feet_hint: 'వెనక్కి వెళ్లండి - ఈ లెవెల్‌కు మీ పాదాలు కనిపించాలి.',
+    step_back_upper: 'ఇప్పుడు తల, భుజాలు, చేతులు ఫ్రేమ్‌లో కనిపించేలా వెనక్కి కూర్చోండి.',
+    boxing_intro: 'షాడో బాక్సింగ్! ప్యాడ్‌లను వీలైనంత వేగంగా గుద్దండి - ఎడమ లేదా కుడి.',
+    pow: 'ఢాం!',
+    bonus_title: '3 బోనస్ లెవెల్స్ తెరవాలా?', bonus_text: 'రైడర్ తప్పించుకో, దుంగ దూకు, ఎద్దు పరుగు - ప్రతిస్పందన, చురుకుదనం, శక్తిని కొలుస్తాయి. వీటికి శరీరం మొత్తం కనిపించాలి - కెమెరా నుండి వెనక్కి వెళ్లండి.',
+    bonus_yes: 'అవును - బోనస్ లెవెల్స్ ఆడతా', bonus_no: 'నా ఫలితాలు చూపించు',
+    bonus_say: 'అద్భుతం! 3 బోనస్ లెవెల్స్ ఆడతారా? వీటికి శరీరం మొత్తం కనిపించాలి. అవును అనండి, లేదా ఫలితాలు అనండి.',
+    scope_upper: 'కొలిచింది: పై శరీరం', scope_full: 'కొలిచింది: పూర్తి శరీరం', not_measured: 'కొలవలేదు',
     calib_ok: 'సిద్ధం!',
     dodge_intro: 'రైడర్‌ని తప్పించుకోండి! ఒక వైపు నుండి రైడర్ వస్తే, వెంటనే మరో వైపుకు అడుగు వేయండి.',
     center: 'మధ్యలోకి తిరిగి రండి.',
@@ -96,8 +132,8 @@ const I18N = {
     try_tip: (n, e, k, mv) => `ప్రయత్నం ${n}: ${e} తప్పులు. అడుగు ${k} గుర్తుంచుకోండి: ${mv}.`,
     results: 'ఆట ముగిసింది! ఇదిగో మీ స్కోరు మరియు మీ దాగి ఉన్న ప్రతిభ.', left: 'ఎడమ', right: 'కుడి',
     level: 'లెవెల్', clear: 'లెవెల్ పూర్తి!', escaped: 'తప్పించుకున్నారు!', phew: 'తృటిలో తప్పింది!', lights: 'లైట్లు ఆరిపోయాయి!', heart_ok: 'గుండె పరీక్ష పూర్తి!',
-    titles: { dodge: 'రైడర్ తప్పించుకో', jump: 'దుంగ దూకు', escape: 'ఎద్దు పరుగు', pulse: 'హార్ట్ స్కాన్', bowler: 'బౌలర్‌ను చదువు', combo: 'డాన్స్ పోటీ' },
-    measures: { dodge: 'రహస్య కొలత: ప్రతిస్పందన + చురుకుదనం', jump: 'రహస్య కొలత: కాళ్ల శక్తి', escape: 'గుండె వేగాన్ని పెంచుతుంది',
+    titles: { dodge: 'రైడర్ తప్పించుకో', jump: 'దుంగ దూకు', escape: 'ఎద్దు పరుగు', pulse: 'హార్ట్ స్కాన్', bowler: 'బౌలర్‌ను చదువు', combo: 'డాన్స్ పోటీ', boxing: 'షాడో బాక్సింగ్' },
+    measures: { boxing: 'గుండె వేగాన్ని పెంచుతుంది', dodge: 'రహస్య కొలత: ప్రతిస్పందన + చురుకుదనం', jump: 'రహస్య కొలత: కాళ్ల శక్తి', escape: 'గుండె వేగాన్ని పెంచుతుంది',
                 pulse: 'రహస్య కొలత: గుండె కోలుకోవడం', bowler: 'రహస్య కొలత: ఆట అవగాహన', combo: 'రహస్య కొలత: నేర్చుకునే వేగం' },
   },
 };
@@ -114,7 +150,9 @@ const LEVEL_META = {
   dodge: { world: 'kabaddi', icon: '🤼', music: 'kabaddi' }, jump: { world: 'jungle', icon: '🪵', music: 'jungle' },
   escape: { world: 'street', icon: '🐂', music: 'street' }, pulse: { world: 'lab', icon: '❤️', music: 'lab' },
   bowler: { world: 'stadium', icon: '🏏', music: 'stadium' }, combo: { world: 'stage', icon: '💃', music: 'stage' },
+  boxing: { world: 'kabaddi', icon: '🥊', music: 'kabaddi' },
 };
+const FULL_BODY_LEVELS = ['dodge', 'jump', 'escape'];
 
 // ------------------------------------------------------------------ state
 const S = {
@@ -122,11 +160,13 @@ const S = {
   src: null, vw: 640, vh: 480, lm: null, body: null, base: null,
   calib: { method: 'pose', cm_per_px: null, body_px: null },
   level: null, running: false, started: false, lastSay: '', quit: false,
-  raw: { dodge: [], jump: [], escape: null, pulse: [], bowler: [], combo: null },
+  scope: null,                                   // 'full' | 'upper' - decided by what the camera sees at the start
+  raw: { dodge: [], jump: [], escape: null, pulse: [], bowler: [], combo: null, boxing: null },
   plan: Object.assign({}, CFG.plan || {}), profile: null, coach: null, saved: null, serverPoints: null,
   ai: { sam: null, voice: null, spark: null, image: null },
   world: 'title', points: 0, streak: 0, levelPts: {}, stars: {}, dots: [], dotsN: 0,
   excite: 0, scroll: 0, dark: 0, maskOk: false, maskT: 0, lastNow: 0, levelNo: 0,
+  light: { luma: null, gain: 1, avatar: false, poorSince: null, goodSince: null },
 };
 try {
   const saved = JSON.parse(localStorage.getItem('arena_next_plan') || 'null');
@@ -181,6 +221,7 @@ function bodyInfo(lm) {
     hipX: (lh.x + rh.x) / 2, hipY: (lh.y + rh.y) / 2, shX: (ls.x + rs.x) / 2, shY: (ls.y + rs.y) / 2,
     sw: Math.max(8, Math.abs(ls.x - rs.x)), nose, ankY: ank, bodyPx: ank - nose.y, lk, rk,
     full: [0, 23, 24, 27, 28].every((i) => lm[i].v >= 0.5),
+    upper: [0, 11, 12].every((i) => lm[i].v >= 0.5),          // head + shoulders (hips may be behind a desk)
     face: [0, 2, 5].every((i) => lm[i].v >= 0.5), eyeDist: Math.hypot(le.x - re.x, le.y - re.y),
   };
 }
@@ -193,8 +234,13 @@ function angle(a, b, c) {
 function classify(lm) {
   const P = (i) => ({ x: lm[i].x * S.vw, y: lm[i].y * S.vh });
   const vis = (...ids) => ids.every((i) => lm[i].v >= 0.5);
-  if (!vis(0, 11, 12, 23, 24, 15, 16)) return 'unknown';
-  const sh = { x: (P(11).x + P(12).x) / 2, y: (P(11).y + P(12).y) / 2 }, hp = { x: (P(23).x + P(24).x) / 2, y: (P(23).y + P(24).y) / 2 };
+  if (!vis(0, 11, 12, 15, 16)) return 'unknown';
+  const hipsOk = vis(23, 24);
+  if (!hipsOk && S.scope !== 'upper') return 'unknown';
+  const sh = { x: (P(11).x + P(12).x) / 2, y: (P(11).y + P(12).y) / 2 };
+  // upper-body game: hips may be hidden (sitting at a desk) - the torso is ~1.5 shoulder widths long
+  const hp = hipsOk ? { x: (P(23).x + P(24).x) / 2, y: (P(23).y + P(24).y) / 2 }
+                    : { x: sh.x, y: sh.y + 1.5 * Math.hypot(P(11).x - P(12).x, P(11).y - P(12).y) };
   const torso = Math.max(Math.hypot(hp.x - sh.x, hp.y - sh.y), 1), nose = P(0), lw = P(15), rw = P(16);
   const near = (a, b, k) => Math.hypot(a.x - b.x, a.y - b.y) < k * torso;
   if (vis(25, 26, 27, 28)) {
@@ -213,7 +259,7 @@ function classify(lm) {
       Math.abs(lw.x - lsh.x) > 0.7 * torso && Math.abs(rw.x - rsh.x) > 0.7 * torso) return 'arms_out';
   let bl = 180, br = 180;
   if (vis(13, 14)) { bl = angle(lsh, P(13), lw); br = angle(rsh, P(14), rw); }
-  if (near(lw, P(23), 0.4) && near(rw, P(24), 0.4) && bl < 130 && br < 130) return 'hands_on_hips';
+  if (hipsOk && near(lw, P(23), 0.4) && near(rw, P(24), 0.4) && bl < 130 && br < 130) return 'hands_on_hips';
   if (lowL && lowR && bl > 140 && br > 140) return 'neutral';
   return 'unknown';
 }
@@ -334,6 +380,10 @@ function pointsFor(raw) {
   const lv = {};
   const num = (v, lo, hi) => (typeof v === 'number' && isFinite(v) && v >= lo && v <= hi ? v : null);
   const stars = (r, hi = 0.9, mid = 0.6) => (r == null ? 0 : r >= hi ? 3 : r >= mid ? 2 : 1);
+  if (raw.boxing) {
+    const secs = num(raw.boxing.secs, 1, 120) || 20, hits = num(raw.boxing.hits, 0, 1000) || 0;
+    lv.boxing = { points: pyRound(50 * Math.min(hits, 3 * secs)), max: pyRound(150 * secs), stars: hits / secs >= 2 ? 3 : hits / secs >= 1.2 ? 2 : 1 };
+  }
   const d = (raw.dodge || []).slice(0, 30);
   if (d.length) {
     let pts = 0, st = 0, mx = 0;
@@ -372,7 +422,8 @@ function pointsFor(raw) {
   }
   const total = Object.values(lv).reduce((a, v) => a + v.points, 0), max = Object.values(lv).reduce((a, v) => a + v.max, 0) || 1;
   const r = total / max, rank = r >= 0.75 ? ['Legend', '👑'] : r >= 0.55 ? ['Pro', '🔥'] : r >= 0.35 ? ['Rising Star', '⭐'] : ['Rookie', '🌱'];
-  return { total, max, percent: pyRound(100 * r), levels: lv, stars: Object.values(lv).reduce((a, v) => a + v.stars, 0), max_stars: 3 * Object.keys(lv).length, rank: rank[0], rank_icon: rank[1] };
+  const scope = FULL_BODY_LEVELS.some((k) => (Array.isArray(raw[k]) ? raw[k].length : raw[k])) ? 'full' : 'upper';
+  return { total, max, percent: pyRound(100 * r), levels: lv, stars: Object.values(lv).reduce((a, v) => a + v.stars, 0), max_stars: 3 * Object.keys(lv).length, rank: rank[0], rank_icon: rank[1], scope };
 }
 
 // ------------------------------------------------------------------ screen mapping + HUD helpers
@@ -430,14 +481,35 @@ async function play(level) {
   S.level = level; if (level.start) level.start(performance.now());
   const out = await level.promise; S.level = null; return out;
 }
-function centered(b) { return b && Math.abs(b.hipX - S.base.hipX) < 0.35 * S.base.sw; }
+// the world's ground line on screen: under the feet in the full-body game; low in the scene in the upper-body game
+// (the player is a foreground figure there, cut off at the waist)
+const groundLine = () => (S.scope === 'upper' ? VIEW.H * 0.86 : V(0, S.base.ankY).y);
+// where the player is, sideways: the hips in the full-body game, the shoulders in the upper-body game
+const posX = (b) => (S.scope === 'upper' ? b.shX : b.hipX);
+function centered(b) { return b && Math.abs(posX(b) - S.base.hipX) < 0.35 * S.base.sw; }
 
 class Calibrate extends Level {
-  constructor() { super('calib'); this.hist = []; this.nag = 0; this.prog = 0; }
-  start() { say(T('calib'), { wait: false }); $('hud-level').textContent = T('calib_ok').replace('!', '') + '…'; textTrial(''); }
+  // kind: 'auto' (first one: whole body -> full game, only the waist up for a while -> upper-body game),
+  //       'full' (bonus levels need the whole body), 'upper' (keep the head, shoulders and arms in view)
+  constructor(kind = 'auto', giveUpMs = 0) { super('calib'); this.kind = kind; this.giveUp = giveUpMs; this.hist = []; this.nag = 0; this.prog = 0; this.upSince = null; }
+  get text() { return T(this.kind === 'auto' ? 'calib_auto' : this.kind === 'upper' ? 'calib_upper' : 'calib'); }
+  start(now) { this.t0 = now; say(this.text, { wait: false }); $('hud-level').textContent = T('calib_ok').replace('!', '') + '…'; textTrial(''); }
   update(now) {
+    if (this.giveUp && now - this.t0 > this.giveUp) return this.finish(false);   // couldn't step back: go to the results
     const b = S.body;
-    if (!b || !b.full || b.bodyPx < 0.35 * S.vh) { this.hist = []; this.prog = 0; if (now - this.nag > 6000) { this.nag = now; say(T('calib'), { wait: false }); } return; }
+    const fullOk = b && b.full && b.bodyPx >= 0.35 * S.vh;
+    // upper-body game: head and shoulders steady, legs not in view, for 4 s (time to step back if they want the full game)
+    const upOk = b && b.upper && !b.full && b.sw >= 0.12 * S.vw;
+    if (this.kind === 'upper' || (this.kind === 'auto' && !fullOk)) {
+      if (upOk && (this.kind === 'upper' || now - this.t0 > 2500)) { this.upSince = this.upSince || now; } else this.upSince = null;
+      const need = this.kind === 'upper' ? 1300 : 4000;
+      this.prog = this.upSince ? clamp((now - this.upSince) / need, 0, 1) : 0;
+      if (this.upSince && now - this.upSince >= need) return this.done(now, 'upper');
+      if (!upOk && !fullOk && now - this.nag > 6000) { this.nag = now; say(this.text, { wait: false }); }
+      if (this.kind === 'upper') return;
+    }
+    if (!fullOk) { this.hist = []; if (this.kind === 'full' && now - this.nag > 6000) { this.nag = now; say(this.text, { wait: false }); } return; }
+    this.upSince = null;
     this.hist.push({ t: now, x: b.hipX, y: b.hipY, sw: b.sw, bp: b.bodyPx, ank: b.ankY });
     this.hist = this.hist.filter((h) => now - h.t < 1500);
     this.prog = clamp((now - this.hist[0].t) / 1300, 0, 1);
@@ -454,6 +526,18 @@ class Calibrate extends Level {
       const hPx = (bx.y2 - bx.y1) * S.vh, ratio = hPx / S.base.bodyPx;
       if (ratio > 1.05 && ratio < 1.4) S.calib = { method: 'sam-3.1', cm_per_px: CFG.heightCm / hPx, body_px: Math.round(S.base.bodyPx), sam_height_px: Math.round(hPx) };
     });
+    this.done(now, 'full');
+  }
+  done(now, scope) {
+    if (scope === 'upper') {
+      const b = S.body;
+      // no legs in view: the "ground" is the bottom of the picture and the torso is ~1.5 shoulder widths long
+      S.base = { hipX: b.shX, hipY: b.shY + 1.5 * b.sw, sw: b.sw, bodyPx: 2.2 * (b.shY + 1.5 * b.sw - b.nose.y), ankY: S.vh * 0.98 };
+    }
+    if (this.kind === 'auto') {
+      S.scope = scope;
+      if (scope === 'upper') { ART.floatText(VIEW.W / 2, VIEW.H * 0.3, '🙋 ' + (S.lang === 'en' ? 'UPPER-BODY GAME' : T('scope_upper')), { color: '#22d3ee', size: 46 * DPR, life: 2.2 }); say(T('upper_mode'), { wait: false }); }
+    } else if (this.kind === 'full') S.scope = 'full';
     sfx.ok(); this.finish(true);
   }
   draw(g, V_, now) {
@@ -683,7 +767,7 @@ class Pulse extends Level {
       award(ok ? 150 : 50, headPoint(), T('heart_ok'), '#f43f5e');
       if (rec.bpm) ART.floatText(headPoint().x, headPoint().y + 90 * DPR, `❤ ${rec.bpm} bpm`, { color: '#fff', size: 44 * DPR, life: 1.8, stroke: '#9f1239' });
       SIM && SIM.cue('close', { on: false });
-      say(T('step_back')).then(() => this.finish(true));
+      say(T(S.scope === 'upper' ? 'step_back_upper' : 'step_back')).then(() => this.finish(true));
     }
   }
   draw(g, V_, now) {
@@ -728,8 +812,8 @@ class Bowler extends Level {
         if (S.mode !== 'blind') ART.floatText(VIEW.W / 2, VIEW.H * 0.3, '⚡ ' + T('lights'), { color: '#fde047', size: 58 * DPR, life: 1.0 });
       }
       if (b && t > 1100 && !this.answer) {
-        const d = b.hipX - S.base.hipX;
-        if (Math.abs(d) > 0.45 * S.base.sw) { this.answer = d < 0 ? 'L' : 'R'; this.rt = Math.round(now - this.t0 - this.tOcc); }
+        const d = posX(b) - S.base.hipX;                  // step - or lean, in the upper-body game
+        if (Math.abs(d) > (S.scope === 'upper' ? 0.4 : 0.45) * S.base.sw) { this.answer = d < 0 ? 'L' : 'R'; this.rt = Math.round(now - this.t0 - this.tOcc); }
       }
       if (S.mode === 'blind' && this.state === 'anim' && t > 1300 && now - (this.lastBeep || 0) > 120) {
         this.lastBeep = now; const pan = (this.target === 'L' ? -1 : 1) * clamp((t - 1300) / 900, 0, 1) * 0.9;
@@ -762,7 +846,7 @@ class Bowler extends Level {
     if (S.mode === 'blind' || !S.base || !['anim', 'occluded', 'reveal'].includes(this.state)) return;
     if (this.state === 'occluded' || (this.state === 'anim' && now - this.t0 >= this.tOcc)) return;   // lights out: nothing to see
     const t = (now - this.t0) / 1000, dir = this.target === 'L' ? -1 : 1;
-    const groundY = V(0, S.base.ankY).y, cx = V(S.vw / 2, 0).x;
+    const groundY = groundLine(), cx = V(S.vw / 2, 0).x;
     this.bw = ART.drawBowler(g, cx, groundY, VIEW.H, this.state === 'reveal' ? 1.75 : Math.min(t, 1.75), dir, { showBall: this.state === 'reveal' });
   }
   draw(g, V_, now) {
@@ -776,12 +860,76 @@ class Bowler extends Level {
   }
 }
 
+// Shadow Boxing (upper-body game): punch the pads that pop up left and right. It raises the heart
+// rate before the heart scan, like Bull Run does in the full-body game. Points only - no talent trait.
+class Boxing extends Level {
+  constructor(secs) { super('boxing'); this.secs = secs; this.hits = 0; this.pads = 0; this.rts = []; this.pad = null; this.nextAt = 0; this.armed = true; }
+  start(now) {
+    this.t0 = now; this.state = 'run'; sfx.go(); this.nextAt = now + 300;
+    SIM && SIM.cue('boxing', { until: now + this.secs * 1000 });
+  }
+  spawn(now) {
+    const side = this.pads === 0 ? 1 : Math.random() < 0.5 ? -1 : 1;     // screen side
+    this.pad = { side, t: now, dy: rand(-0.2, 0.3) }; this.pads++;
+    if (S.mode === 'blind') tone(side < 0 ? 520 : 780, 90, { pan: side * 0.9 });
+    SIM && SIM.cue('pad', { side, t: now });
+  }
+  padAt(b) {     // video pixels, mirrored like bodyInfo
+    const sw = S.base.sw, sx = b ? b.shX : S.base.hipX, sy = b ? b.shY : S.base.hipY - 1.5 * sw;
+    return { x: sx + this.pad.side * 1.6 * sw, y: sy + this.pad.dy * sw };
+  }
+  update(now) {
+    if (this.state !== 'run') return;
+    const left = this.secs - (now - this.t0) / 1000;
+    textTrial(`⏱ ${Math.max(0, Math.ceil(left))} s   🥊 ${this.hits}`);
+    if (!this.pad && now >= this.nextAt) this.spawn(now);
+    const b = S.body, lm = S.lm;
+    if (this.pad && b && lm) {
+      const p = this.padAt(b), r = 0.9 * S.base.sw;
+      // a punch only counts after the fists came back to the body (holding the arms out doesn't score)
+      const guard = [15, 16].every((i) => lm[i].v < 0.4 || Math.abs((1 - lm[i].x) * S.vw - b.shX) < 1.0 * S.base.sw);
+      if (guard) this.armed = true;
+      const hit = this.armed && [15, 16].some((i) => lm[i].v >= 0.4 && Math.hypot((1 - lm[i].x) * S.vw - p.x, lm[i].y * S.vh - p.y) < r);
+      if (hit) {
+        this.hits++; this.rts.push(now - this.pad.t); this.armed = false;
+        const at = V(p.x, p.y);
+        sfx.hit(); ART.burst(at.x, at.y, { n: 18, size: 8 * DPR, speed: 380 * DPR, gravity: 600 * DPR });
+        award(50, at, this.hits % 5 === 0 ? `${this.hits}!` : T('pow'), '#fde047');
+        if (this.hits % 10 === 0) sfx.cheer();
+        this.pad = null; this.nextAt = now + 120;
+      } else if (now - this.pad.t > 1800) { this.pad = null; this.nextAt = now + 100; }
+    }
+    if (left <= 0) {
+      this.state = 'done';
+      S.raw.boxing = { hits: this.hits, pads: this.pads, secs: this.secs, median_ms: this.rts.length ? Math.round(median(this.rts)) : null };
+      success(true); sfx.cheer(true); this.finish(true);
+    }
+  }
+  draw(g, V_, now) {
+    if (this.state !== 'run' || !S.base) return;
+    if (this.pad) {
+      const p = V(...Object.values(this.padAt(S.body))), r = 0.9 * S.base.sw * V.s, age = (now - this.pad.t) / 1800;
+      g.save();
+      g.fillStyle = this.pad.side < 0 ? '#ef4444' : '#3b82f6'; g.strokeStyle = '#fff'; g.lineWidth = 6 * DPR;
+      g.shadowColor = g.fillStyle; g.shadowBlur = 24;
+      g.beginPath(); g.arc(p.x, p.y, r * (0.9 + 0.08 * Math.sin(now / 90)), 0, Math.PI * 2); g.fill(); g.stroke();
+      g.shadowBlur = 0; g.strokeStyle = '#fde047'; g.lineWidth = 8 * DPR;      // time ring
+      g.beginPath(); g.arc(p.x, p.y, r * 1.15, -Math.PI / 2, -Math.PI / 2 + (1 - age) * Math.PI * 2); g.stroke();
+      g.font = `${Math.round(r)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('🥊', p.x, p.y + 2 * DPR);
+      g.restore();
+    }
+    const left = Math.max(0, this.secs - (now - this.t0) / 1000);
+    bigText(g, `${Math.ceil(left)}`, VIEW.W * 0.88, VIEW.H * 0.3, 110 * DPR, left <= 3 ? '#ef4444' : '#fff');
+  }
+}
+
 const COMBO_MOVES = ['hands_up', 'left_hand_up', 'right_hand_up', 'arms_out', 'hands_on_head', 'hands_on_hips', 'squat'];
 class Combo extends Level {
   constructor(len, tries) {
     super('combo'); this.tries = tries; this.k = 0; this.pattern = [];
+    const moves = S.scope === 'upper' ? COMBO_MOVES.filter((m) => m !== 'squat' && m !== 'hands_on_hips') : COMBO_MOVES;
     while (this.pattern.length < len) {
-      const m = COMBO_MOVES[Math.floor(Math.random() * COMBO_MOVES.length)];
+      const m = moves[Math.floor(Math.random() * moves.length)];
       if (m !== this.pattern[this.pattern.length - 1]) this.pattern.push(m);
     }
     S.raw.combo = { pattern: this.pattern, tries: [] };
@@ -828,7 +976,7 @@ class Combo extends Level {
   }
   drawBack(g, V_, now) {
     // the dancing coach on the stage: shows each move in time with the music, then waits
-    const groundY = S.base ? V(0, S.base.ankY).y : VIEW.H * 0.92, boxH = VIEW.H * 0.5, cx = Math.max(VIEW.W * 0.14, V(S.vw * 0.12, 0).x);
+    const groundY = S.base ? groundLine() : VIEW.H * 0.92, boxH = VIEW.H * 0.5, cx = Math.max(VIEW.W * 0.14, V(S.vw * 0.12, 0).x);
     let move = 'hands_on_hips';
     if (this.state === 'show') { const i = Math.floor((now - this.tShow) / this.stepMs); move = this.pattern[clamp(i, 0, this.pattern.length - 1)]; }
     const bounce = beatPulse() * 6 * DPR, P = ART.movePose(move), Q2 = {};
@@ -899,10 +1047,14 @@ function radarSvg(traits) {
 function showProfile(p) {
   S.profile = p;
   $('radar').innerHTML = radarSvg(p.traits);
+  const sc = p.scope || S.scope || 'full';
+  $('scope-badge').textContent = (sc === 'upper' ? '🙋 ' : '🧍 ') + T(sc === 'upper' ? 'scope_upper' : 'scope_full');
+  $('scope-badge').className = 'scope-badge ' + sc;
+  $('scope-note').textContent = sc === 'upper' ? (p.scope_note || 'Reflexes, agility and power need the whole body in view - not measured, not zero.') : '';
   $('overall').innerHTML = p.overall == null ? 'Play more levels to get a score' : `Talent score <b>${Math.round(p.overall)}</b>`;
   $('trait-list').innerHTML = Object.keys(LABELS).map((k) => {
     const v = p.traits[k];
-    return `<li><span>${LABELS[k]}</span><span class="bar"><i style="width:${v ?? 0}%"></i></span><b>${v == null ? '–' : Math.round(v)}</b></li>`;
+    return `<li class="${v == null ? 'nm' : ''}"><span>${LABELS[k]}</span><span class="bar"><i style="width:${v ?? 0}%"></i></span><b>${v == null ? (S.scope === 'upper' && ['reflex', 'agility', 'power'].includes(k) ? T('not_measured') : '–') : Math.round(v)}</b></li>`;
   }).join('');
   $('sports').innerHTML = (p.sports || []).map((s) => `<li>${s.sport} <span class="muted">· ${s.match}% match</span></li>`).join('') || '<li class="muted">Finish more levels to see matches.</li>';
   const pc = (p.details && p.details.pulse && p.details.pulse.checks) || S.raw.pulse.map((x) => ({ bpm: x.bpm, ok: x.quality >= 0.25 }));
@@ -931,9 +1083,12 @@ function boardHtml(rows, me) {
   return rows.map((r) => `<li class="${me && r.name === me.name && r.points === me.points ? 'me' : ''}"><b>${r.points.toLocaleString('en-IN')}</b> ${esc(r.name)} ${r.rank_icon || ''}${r.simulated ? ' 🤖' : ''}</li>`).join('');
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-async function loadBoard(me) {
+let BOARD_SCOPE = 'full';
+async function loadBoard(me, scope) {
+  if (scope) BOARD_SCOPE = scope;
+  document.querySelectorAll('.board-scope').forEach((b) => b.classList.toggle('on', b.dataset.scope === BOARD_SCOPE));
   try {
-    const d = await (await fetch('/api/arena/leaderboard' + (S.sim ? '?sim=1' : ''))).json();
+    const d = await (await fetch(`/api/arena/leaderboard?scope=${BOARD_SCOPE}` + (S.sim ? '&sim=1' : ''))).json();
     $('board-today').innerHTML = boardHtml(d.today.slice(0, 5), me);
     $('board-today-full').innerHTML = boardHtml(d.today, me);
     $('board-all').innerHTML = boardHtml(d.all_time, me);
@@ -947,7 +1102,7 @@ async function finishGame() {
   const raw = rawPayload();
   showProfile(localProfile(raw)); showPoints(pointsFor(raw));
   try { const r = await postJSON('/api/arena/score', { raw }); if (r.ok) { showProfile(r.profile); if (r.points) showPoints(r.points); } } catch (e) { /* offline: local numbers stay */ }
-  loadBoard();
+  loadBoard(null, S.scope || 'full');
   say(T('results'), { wait: false });
   try {
     const r = await postJSON('/api/arena/coach', { raw, lang: S.lang, name: $('pname').value, age: $('page').value, plan_used: S.plan }, 70000);
@@ -967,6 +1122,7 @@ async function finishGame() {
 function rawPayload() {
   return { calib: { method: S.calib.method, cm_per_px: S.calib.cm_per_px && +S.calib.cm_per_px.toFixed(4), body_px: S.calib.body_px },
            dodge: S.raw.dodge, jump: S.raw.jump, escape: S.raw.escape, pulse: S.raw.pulse, bowler: S.raw.bowler, combo: S.raw.combo,
+           boxing: S.raw.boxing, scope: S.scope,
            plan_used: S.plan, quick: S.quick, mode: S.mode };
 }
 $('save-btn').addEventListener('click', async () => {
@@ -987,10 +1143,11 @@ $('save-btn').addEventListener('click', async () => {
     }
     $('save-btn').textContent = '✓ Saved - verified card ready';
     if (r.board && r.board.today) {
-      $('board-pos').hidden = false; $('board-pos').innerHTML = `🏆 <b>#${r.board.today}</b> today of ${r.board.today_players}`;
+      $('board-pos').hidden = false;
+      $('board-pos').innerHTML = `🏆 <b>#${r.board.today}</b> today of ${r.board.today_players}` + (r.board.scope === 'upper' ? ' (upper body)' : '');
       if (r.board.today === 1) { ART.confetti(VIEW.W, VIEW.H, 120); sfx.cheer(true); }
     }
-    loadBoard({ name: r.display, points: r.points && r.points.total });
+    loadBoard({ name: r.display, points: r.points && r.points.total }, (r.points && r.points.scope) || S.scope);
   } catch (e) { $('save-btn').disabled = false; $('save-btn').textContent = '🪪 Save & get my verified card'; caption('Could not save: ' + e.message); }
 });
 $('poster-btn').addEventListener('click', async () => {
@@ -1045,6 +1202,8 @@ async function stopRec() {
   } catch (e) { caption('Voice command failed'); }
 }
 function voiceIntent(intent) {
+  if (BONUS.open) { if (intent === 'start' || intent === 'next' || intent === 'yes') BONUS.answer(true); else if (intent === 'results' || intent === 'no') BONUS.answer(false); return; }
+  if (intent === 'yes') intent = 'start';
   if (intent === 'start' && !S.started) startGame();
   else if (intent === 'next' && S.level && S.level.key !== 'calib') S.level.finish(false);
   else if (intent === 'repeat') say(S.lastSay || T('calib'));
@@ -1061,6 +1220,8 @@ $('mute-btn').addEventListener('click', () => {
 $('quit-btn').addEventListener('click', () => { if (S.running) { S.quit = true; if (S.level) S.level.finish(false); } });
 document.addEventListener('keydown', (e) => {
   if (e.repeat || e.target.tagName === 'INPUT') return;
+  if (BONUS.open && (e.code === 'Space' || e.key === 'y' || e.key === 'Y')) { e.preventDefault(); BONUS.answer(true); return; }
+  if (BONUS.open && (e.key === 'Escape' || e.key === 'r' || e.key === 'R' || e.key === 'n' || e.key === 'N')) { BONUS.answer(false); return; }
   if (e.code === 'Space' && !S.started) { e.preventDefault(); startGame(); }
   if (e.key === 'v' || e.key === 'V') startRec();
   if (e.key === 'm' || e.key === 'M') $('mute-btn').click();
@@ -1087,21 +1248,76 @@ async function loadPose() {
   try { landmarker = await mod.PoseLandmarker.createFromOptions(files, opts('GPU')); }
   catch (e) { landmarker = await mod.PoseLandmarker.createFromOptions(files, opts('CPU')); }
 }
+let maskPrev = null, maskCount = [], lightT = 0;
+const LUMA = document.createElement('canvas'), LCTX = LUMA.getContext('2d', { willReadFrequently: true });
 function updateMask(m) {
   const w = m.width, h = m.height, arr = m.getAsFloat32Array();
-  if (MASK.width !== w || MASK.height !== h || !maskImg) { MASK.width = w; MASK.height = h; maskImg = MCTX.createImageData(w, h); }
-  const d = maskImg.data;
-  for (let i = 0, j = 3; i < arr.length; i++, j += 4) d[j] = arr[i] * 255;
+  if (MASK.width !== w || MASK.height !== h || !maskImg) { MASK.width = w; MASK.height = h; maskImg = MCTX.createImageData(w, h); maskPrev = null; }
+  if (!maskPrev || maskPrev.length !== arr.length) maskPrev = new Float32Array(arr);
+  const d = maskImg.data; let count = 0;
+  for (let i = 0, j = 3; i < arr.length; i++, j += 4) {
+    const v = 0.6 * arr[i] + 0.4 * maskPrev[i];              // steadier edges: less flicker frame to frame
+    maskPrev[i] = v;
+    const a = v <= 0.35 ? 0 : v >= 0.65 ? 1 : (v - 0.35) / 0.3;   // faint "ghost" areas cut away, edge kept soft
+    d[j] = a * a * (3 - 2 * a) * 255;
+    if (v > 0.5) count++;
+  }
   MCTX.putImageData(maskImg, 0, 0);
+  maskCount.push(count); if (maskCount.length > 30) maskCount.shift();
   if (PERSON.width !== S.vw || PERSON.height !== S.vh) { PERSON.width = S.vw; PERSON.height = S.vh; }
   PCTX.globalCompositeOperation = 'copy'; PCTX.drawImage(S.src, 0, 0, S.vw, S.vh);
   PCTX.globalCompositeOperation = 'destination-in'; PCTX.drawImage(MASK, 0, 0, S.vw, S.vh);
   PCTX.globalCompositeOperation = 'source-over';
   S.maskOk = true; S.maskT = performance.now();
+  if (S.maskT - lightT > 500) { lightT = S.maskT; measureLight(); }
+}
+// How bright is the player, and is the cut-out steady? Used to brighten the player and to switch to the
+// cartoon avatar when the room is too dark or the cut-out keeps breaking up.
+function measureLight() {
+  LUMA.width = 64; LUMA.height = 48;
+  LCTX.clearRect(0, 0, 64, 48); LCTX.drawImage(PERSON, 0, 0, 64, 48);
+  const d = LCTX.getImageData(0, 0, 64, 48).data; let sum = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200) { sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n++; }
+  const luma = n > 40 ? sum / n : null;
+  const mean = maskCount.reduce((a, b) => a + b, 0) / (maskCount.length || 1);
+  const jitter = mean ? Math.sqrt(maskCount.reduce((a, b) => a + (b - mean) ** 2, 0) / maskCount.length) / mean : 1;
+  const L = S.light;
+  if (luma != null) L.luma = L.luma == null ? luma : 0.7 * L.luma + 0.3 * luma;
+  L.gain = L.luma ? clamp(135 / L.luma, 0.95, 1.7) : 1;        // auto-brighten a dim player
+  const poor = (L.luma != null && L.luma < 42) || jitter > 0.35 || n <= 40;
+  const now = performance.now();
+  if (poor) { L.goodSince = null; L.poorSince = L.poorSince || now; } else { L.poorSince = null; L.goodSince = L.goodSince || now; }
+  if (!L.avatar && L.poorSince && now - L.poorSince > 3000 && S.running) {
+    L.avatar = true; caption(S.lang === 'en' ? 'The room is too dark for the camera cut-out - showing your avatar.' : '🧍');
+  } else if (L.avatar && L.goodSince && now - L.goodSince > 3000) L.avatar = false;
 }
 let lastTs = 0;
+// tests/demos: ?sim=1&cutout=1 sends the simulated player through the real camera cut-out path (mask smoothing,
+// scene lighting, avatar fallback); &dark=1 makes the "room" dark and the mask patchy
+const SIM_CUTOUT = Q.get('cutout') === '1', SIM_DARK = Q.get('dark') === '1';
+function simMask() {
+  const w = 160, h = 120, c = simMask.c || (simMask.c = document.createElement('canvas'));
+  c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true });
+  x.clearRect(0, 0, w, h); x.drawImage(SIM.c, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, out = new Float32Array(w * h);
+  for (let i = 0; i < out.length; i++) {
+    let v = d[i * 4 + 3] / 255;
+    if (SIM_DARK) v = Math.random() < 0.5 ? v * Math.random() : v;      // a patchy cut-out, like a dark room
+    else if (v === 0 && Math.random() < 0.02) v = 0.3;                    // faint "ghost" specks to clean away
+    out[i] = v;
+  }
+  return { width: w, height: h, getAsFloat32Array: () => out };
+}
 function detect(now) {
-  if (SIM) return SIM.landmarks(now);
+  if (SIM) {
+    if (SIM_CUTOUT) {
+      try {
+        if (SIM_DARK) { const x = SIM.c.getContext('2d'); x.globalCompositeOperation = 'source-atop'; x.fillStyle = 'rgba(0,0,0,0.82)'; x.fillRect(0, 0, SIM.c.width, SIM.c.height); x.globalCompositeOperation = 'source-over'; }
+        updateMask(simMask());
+      } catch (e) { /* ignore */ }
+    }
+    return SIM.landmarks(now);
+  }
   if (!landmarker || S.src.readyState < 2) return null;
   const ts = Math.max(lastTs + 1, Math.round(now)); lastTs = ts;
   const r = landmarker.detectForVideo(S.src, ts);
@@ -1109,16 +1325,40 @@ function detect(now) {
   try { if (r.segmentationMasks) r.segmentationMasks.forEach((m) => m.close && m.close()); } catch (e) { /* ignore */ }
   return r && r.landmarks && r.landmarks[0] ? r.landmarks[0].map((p) => ({ x: p.x, y: p.y, v: p.visibility ?? 1 })) : null;
 }
+const WORLD_LIGHT = {        // the colour of each world's light, laid over the player so they look lit by the scene
+  kabaddi: 'rgba(255,140,60,0.20)', jungle: 'rgba(120,200,110,0.16)', street: 'rgba(255,190,120,0.16)', lab: 'rgba(120,210,255,0.16)',
+  stadium: 'rgba(120,160,255,0.24)', stage: 'rgba(244,114,182,0.20)', title: 'rgba(255,170,90,0.12)',
+};
+const LIT = document.createElement('canvas'), LITCTX = LIT.getContext('2d');
 const FIG_IDS = [0, 2, 5, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
 function drawPlayer(g) {
   const o = V(0, 0), w = S.vw * V.s, h = S.vh * V.s;
-  const cutout = SIM ? SIM.c : (S.view === 'camera' && S.maskOk && performance.now() - S.maskT < 600 ? PERSON : null);
+  const live = S.view === 'camera' && S.maskOk && performance.now() - S.maskT < 600 && !S.light.avatar;
+  const cutout = SIM && !SIM_CUTOUT ? SIM.c : live ? PERSON : null;
   g.save();
   g.globalAlpha = S.level && S.level.playerAlpha != null ? S.level.playerAlpha : 1;
+  // soft shadow on the ground under the feet (full-body game)
+  if (S.base && S.scope === 'full' && S.body && S.body.full && (!S.level || S.level.key !== 'pulse')) {
+    const f = V(S.body.hipX, S.base.ankY), rx = 1.4 * S.base.sw * V.s;
+    const sh = g.createRadialGradient(f.x, f.y, 0, f.x, f.y, rx);
+    sh.addColorStop(0, 'rgba(0,0,0,0.38)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+    g.save(); g.fillStyle = sh; g.beginPath(); g.ellipse(f.x, f.y + 4 * DPR, rx, rx * 0.22, 0, 0, Math.PI * 2); g.fill(); g.restore();
+  }
   if (cutout) {
+    let img = cutout;
+    if (img === PERSON) {     // light the player like the scene: auto-brightness + the world's colour, only on the player's pixels
+      if (LIT.width !== cutout.width || LIT.height !== cutout.height) { LIT.width = cutout.width; LIT.height = cutout.height; }
+      LITCTX.globalCompositeOperation = 'copy';
+      LITCTX.filter = `brightness(${S.light.gain.toFixed(2)}) contrast(1.06) saturate(1.12)`;
+      LITCTX.drawImage(cutout, 0, 0); LITCTX.filter = 'none';
+      LITCTX.globalCompositeOperation = 'source-atop';
+      LITCTX.fillStyle = WORLD_LIGHT[S.world] || 'rgba(0,0,0,0)'; LITCTX.fillRect(0, 0, LIT.width, LIT.height);
+      LITCTX.globalCompositeOperation = 'source-over';
+      img = LIT;
+    }
     g.translate(o.x + w, o.y); g.scale(-1, 1);
-    g.shadowColor = 'rgba(255,255,255,0.9)'; g.shadowBlur = 16 * DPR;
-    g.drawImage(cutout, 0, 0, w, h);
+    g.shadowColor = 'rgba(255,255,255,0.55)'; g.shadowBlur = 5 * DPR;      // thin rim of light, not a thick glow
+    g.drawImage(img, 0, 0, w, h);
   } else if (S.lm) {
     const P = {}; for (const i of FIG_IDS) P[i] = lmScreen(S.lm, i);
     ART.drawFigure(g, P, ART.PALETTE.player, { glowColor: '#22d3ee', alpha: g.globalAlpha });
@@ -1136,6 +1376,7 @@ class SimPlayer {
   constructor() {
     this.c = document.createElement('canvas'); this.c.width = 640; this.c.height = 480; this.g = this.c.getContext('2d');
     this.dx = 0; this.lift = 0; this.move = 'neutral'; this.close = false; this.bpm = 80; this.run = 0; this.tw = []; this._anim = [];
+    this.upper = Q.get('scope') === 'upper';      // demo of the upper-body game: sitting close, legs out of view
   }
   at(t, fn) { this.tw.push({ t, fn }); }
   tween(prop, to, t0, ms) { this.tw.push({ t: t0, fn: () => { this._anim.push({ prop, from: this[prop], to, t0, ms }); } }); }
@@ -1158,6 +1399,11 @@ class SimPlayer {
       for (const m of seq) { this.at(t, () => { this.move = m; }); t += 750; this.at(t, () => { this.move = 'neutral'; }); t += 500; }
     } else if (kind === 'close') { this.close = d.on; if (d.bpm) this.bpm = d.bpm; }
     else if (kind === 'escape') { this.runUntil = d.until; }
+    else if (kind === 'fullbody') { this.at(now + 1500, () => { this.upper = false; }); }
+    else if (kind === 'pad') {          // punch: both arms out (reaches either pad), then back
+      const rt = rand(250, 450);
+      this.at(now + rt, () => { this.punch = true; }); this.at(now + rt + 280, () => { this.punch = false; });
+    }
   }
   step(now) {
     this.tw = this.tw.filter((x) => { if (now >= x.t) { x.fn(); return false; } return true; });
@@ -1177,6 +1423,13 @@ class SimPlayer {
     }
     const P = ART.movePose(this.move, { run: this.run });
     for (const k in P) set(+k, P[k][0], P[k][1]);
+    if (this.upper) {                 // closer to the camera: zoom on the upper body, hips and legs out of view
+      for (const k in P) { const x = (P[k][0] - 0.5) * 1.6 + 0.5, y = (P[k][1] - 0.3) * 1.6 + 0.36; set(+k, x, y, +k >= 23 ? 0.05 : 0.99); }
+    }
+    if (this.punch) {                 // both fists out at shoulder height, where the pads are
+      const mx = (lm[11].x + lm[12].x) / 2, my = (lm[11].y + lm[12].y) / 2, sw = Math.abs(lm[11].x - lm[12].x);
+      lm[15] = { x: mx + 1.55 * sw, y: my, v: 0.99 }; lm[16] = { x: mx - 1.55 * sw, y: my, v: 0.99 };
+    }
     return lm;
   }
   render(now) {   // the simulated "camera picture": a cartoon kid on a transparent background (the pulse reader samples its skin)
@@ -1212,22 +1465,45 @@ function titleScene(g, W, H, groundY, now) {
   ART.drawRunner(g, rx, groundY, H * 0.42, ART.PALETTE.raider, { dir: -1, phase: now / 55, lean: 0.42, reach: 1 });
   if (Math.random() < 0.3) ART.dust(rx + H * 0.06, groundY, 1);
 }
+// Where the camera picture goes on screen. Before calibration (and in the heart scan, where the face comes
+// close) it simply fits the screen. During the game the player is placed in the world at a set size:
+// full-body game - standing on the ground line, about 62 % of the screen tall, whatever their distance;
+// upper-body game - a foreground player, waist at the bottom edge. Everything in the levels is drawn through
+// the same mapping, so raiders, logs and pads stay exactly where the body is.
+function placeView(W, H, dt) {
+  const fit = Math.min(W / S.vw, H / S.vh);
+  let s = fit, ox = (W - S.vw * fit) / 2, oy = (H - S.vh * fit) / 2;
+  const free = !S.base || !S.running || (S.level && (S.level.key === 'pulse' || S.level.key === 'calib'));
+  if (!free && S.scope === 'full') {
+    s = clamp((0.62 * H) / S.base.bodyPx, fit * 0.6, fit * 1.6);
+    ox = W / 2 - S.base.hipX * s; oy = 0.9 * H - S.base.ankY * s;
+  } else if (!free && S.scope === 'upper') {
+    s = clamp(Math.min(0.18 * W, 0.26 * H) / S.base.sw, fit * 0.5, fit * 1.4);
+    ox = W / 2 - S.base.hipX * s; oy = 1.02 * H - S.base.hipY * s;
+  }
+  const k = VIEW.ready ? Math.min(1, dt * 4) : 1;               // glide, don't jump, between levels
+  VIEW.s += (s - VIEW.s) * k; VIEW.ox += (ox - VIEW.ox) * k; VIEW.oy += (oy - VIEW.oy) * k; VIEW.ready = true;
+}
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - (S.lastNow || now)) / 1000); S.lastNow = now;
   const W = stage.width, H = stage.height;
   VIEW.W = W; VIEW.H = H;
-  if (S.src) { VIEW.s = Math.min(W / S.vw, H / S.vh); VIEW.ox = (W - S.vw * VIEW.s) / 2; VIEW.oy = (H - S.vh * VIEW.s) / 2; }
+  if (S.src) placeView(W, H, dt);
   if (S.src) {
     if (SIM) SIM.render(now);
     S.lm = detect(now);
     S.body = S.lm ? bodyInfo(S.lm) : null;
     if (S.level && S.running) S.level.update(now);
+    if (S.level && S.running && FULL_BODY_LEVELS.includes(S.level.key) && S.body && !S.body.full) {
+      S.noFeet = S.noFeet || now;
+      if (now - S.noFeet > 1200 && now - (S.feetSaid || 0) > 5000) { S.feetSaid = now; say(T('feet_hint'), { wait: false }); }
+    } else S.noFeet = null;
   }
   ART.fxStep(dt);
   S.excite = Math.max(0, S.excite - dt * 0.7);
   S.dark += ((S.darkTarget || 0) - S.dark) * Math.min(1, dt * 14);
-  const groundY = S.src && S.base ? V(0, S.base.ankY).y : S.src && S.body && S.body.full ? V(0, S.body.ankY).y : H * 0.9;
+  const groundY = S.src && S.base ? groundLine() : S.src && S.body && S.body.full ? V(0, S.body.ankY).y : H * 0.9;
   G.save();
   if (ART.FX.shake) G.translate(rand(-1, 1) * ART.FX.shake, rand(-1, 1) * ART.FX.shake);
   ART.drawWorld(G, S.world, W, H, groundY, now / 1000, { excite: S.excite, scroll: S.scroll, dark: S.dark, beat: beatPulse() });
@@ -1262,6 +1538,31 @@ $('settings-btn').addEventListener('click', () => { const s = $('settings'); s.h
 for (const k of ['mode', 'length', 'view', 'music']) if (Q.get(k) && [...$(k).options].some((o) => o.value === Q.get(k))) $(k).value = Q.get(k);
 setLang(S.lang);
 loadBoard();
+document.querySelectorAll('.board-scope').forEach((b) => b.addEventListener('click', () => loadBoard(null, b.dataset.scope)));
+
+// ------------------------------------------------------------------ bonus question (upper-body game -> full-body levels)
+const BONUS = {
+  open: false, _res: null,
+  ask() {
+    $('bonus-title').textContent = T('bonus_title'); $('bonus-text').textContent = T('bonus_text');
+    $('bonus-yes').textContent = '✅ ' + T('bonus_yes'); $('bonus-no').textContent = '🏁 ' + T('bonus_no');
+    $('bonus').hidden = false; this.open = true; sfx.levelUp(); $('bonus-yes').focus();
+    say(T('bonus_say'), { wait: false });
+    const auto = S.sim ? (Q.get('bonus') === '0' ? false : true) : null;
+    return new Promise((resolve) => {
+      this._res = resolve;
+      if (auto !== null) setTimeout(() => this.answer(auto), 1500);
+      this._to = setTimeout(() => this.answer(false), 45000);       // nobody answered: show the results
+    });
+  },
+  answer(yes) {
+    if (!this.open) return;
+    this.open = false; clearTimeout(this._to); $('bonus').hidden = true; sfx.ok();
+    const r = this._res; this._res = null; if (r) r(!!yes);
+  },
+};
+$('bonus-yes').addEventListener('click', () => BONUS.answer(true));
+$('bonus-no').addEventListener('click', () => BONUS.answer(false));
 
 // ------------------------------------------------------------------ the game
 const FINAL_SCAN = { en: 'FINAL SCAN', hi: 'आख़िरी स्कैन', te: 'చివరి స్కాన్' };
@@ -1286,6 +1587,7 @@ async function showClear(key, before) {
     dodge: () => { const ok = r.dodge.filter((t) => t.ok), rts = ok.map((t) => t.rt).filter(Boolean); return `${ok.length}/${r.dodge.length} · ⚡ ${rts.length ? Math.min(...rts) : '–'} ms`; },
     jump: () => { const hs = r.jump.filter((j) => j.ok).map((j) => j.cm); return `${hs.length}/${r.jump.length} · ⬆ ${hs.length ? Math.round(Math.max(...hs)) : 0} cm`; },
     escape: () => `👟 ${r.escape ? r.escape.steps : 0}`,
+    boxing: () => `🥊 ${r.boxing ? r.boxing.hits : 0}`,
     pulse: () => { const p = r.pulse[r.pulse.length - 1]; return p && p.bpm ? `❤ ${p.bpm} bpm` : '❤ –'; },
     bowler: () => `${r.bowler.filter((t) => t.answer === t.target).length}/${r.bowler.length} 🏏`,
     combo: () => `✗ ${r.combo.tries.map((t) => editDistance(r.combo.pattern, t.done).dist).join(' → ')}`,
@@ -1322,25 +1624,51 @@ async function startGame() {
   }
   $('title').hidden = true; $('hud').hidden = false; S.running = true; updateScore(false);
   const plan = Object.assign({ raider_window_ms: 1500, log_speed: 1, bowler_hard_share: 0.35, combo_length: 4 }, S.plan); S.plan = plan;
-  const N = S.quick ? { dodge: 6, jump: 3, escape: 10, pulse: 12, bowler: 6, tries: 2 } : { dodge: 10, jump: 5, escape: 15, pulse: 15, bowler: 8, tries: 3 };
-  const steps = [
-    { cal: 'kabaddi' }, { key: 'dodge', mk: () => new Dodge(N.dodge, plan.raider_window_ms) }, { key: 'jump', mk: () => new Jump(N.jump, plan.log_speed) },
+  const N = S.quick ? { dodge: 6, jump: 3, escape: 10, pulse: 12, bowler: 6, tries: 2, boxing: 20 }
+                    : { dodge: 10, jump: 5, escape: 15, pulse: 15, bowler: 8, tries: 3, boxing: 30 };
+  // 1. what can the camera see? whole body -> full game; only the waist up -> upper-body game
+  setWorld('kabaddi', 'kabaddi');
+  await play(new Calibrate('auto'));
+  const full = [
+    { key: 'dodge', mk: () => new Dodge(N.dodge, plan.raider_window_ms) }, { key: 'jump', mk: () => new Jump(N.jump, plan.log_speed) },
     { key: 'escape', mk: () => new Escape(N.escape) }, { key: 'pulse', mk: () => new Pulse(N.pulse, 0) },
-    { cal: 'stadium' }, { key: 'bowler', mk: () => new Bowler(N.bowler, plan.bowler_hard_share) },
+    { cal: 'stadium', kind: 'full' }, { key: 'bowler', mk: () => new Bowler(N.bowler, plan.bowler_hard_share) },
     { key: 'combo', mk: () => new Combo(plan.combo_length, N.tries) }, { key: 'pulse', mk: () => new Pulse(N.pulse, 1), final: true },
   ];
-  let no = 0;
-  for (const st of steps) {
-    if (S.quit) break;
-    if (st.cal) { setWorld(st.cal, st.cal); await play(new Calibrate()); continue; }
-    const meta = LEVEL_META[st.key];
-    setWorld(meta.world, meta.music);
-    await showIntro(st.key, st.final ? FINAL_SCAN[S.lang] : `${T('level')} ${++no}/6`);
-    if (S.quit) break;
-    S.streak = 0; setCombo(0); const before = S.points;
-    await play(st.mk());
-    if (S.quit) break;
-    await showClear(st.key, before);
+  const upper = [
+    { key: 'boxing', mk: () => new Boxing(N.boxing) }, { key: 'pulse', mk: () => new Pulse(N.pulse, 0) },
+    { cal: 'stadium', kind: 'upper' }, { key: 'bowler', mk: () => new Bowler(N.bowler, plan.bowler_hard_share) },
+    { key: 'combo', mk: () => new Combo(plan.combo_length, N.tries) }, { key: 'pulse', mk: () => new Pulse(N.pulse, 1), final: true },
+  ];
+  const bonus = [
+    { cal: 'kabaddi', kind: 'full', cue: true }, { key: 'dodge', mk: () => new Dodge(N.dodge, plan.raider_window_ms) },
+    { key: 'jump', mk: () => new Jump(N.jump, plan.log_speed) }, { key: 'escape', mk: () => new Escape(N.escape) },
+  ];
+  const runSteps = async (steps, total, prefix) => {
+    let no = 0;
+    for (const st of steps) {
+      if (S.quit) return;
+      if (st.cal) {
+        setWorld(st.cal, st.cal);
+        if (st.cue) SIM && SIM.cue('fullbody', {});
+        if (await play(new Calibrate(st.kind, st.cue ? 40000 : 0)) === false) return;
+        continue;
+      }
+      const meta = LEVEL_META[st.key];
+      setWorld(meta.world, meta.music);
+      await showIntro(st.key, st.final ? FINAL_SCAN[S.lang] : `${prefix || T('level')} ${++no}/${total}`);
+      if (S.quit) return;
+      S.streak = 0; setCombo(0); const before = S.points;
+      await play(st.mk());
+      if (S.quit) return;
+      await showClear(st.key, before);
+    }
+  };
+  if (!S.quit && S.scope === 'upper') {
+    await runSteps(upper, 4);
+    if (!S.quit && await BONUS.ask()) await runSteps(bonus, 3, 'BONUS');
+  } else if (!S.quit) {
+    await runSteps(full, 6);
   }
   finishGame();
 }

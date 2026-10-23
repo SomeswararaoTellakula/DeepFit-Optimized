@@ -199,12 +199,10 @@ class MetaChatbot:
         import llm
         e = err.lower()
         if "no ai key" in e:
-            return "The AI Coach has no API key yet. Add MODEL_API_KEY (Meta) or GROQ_API_KEY to the .env file and restart."
-        if llm.groq_key() and "groq" in e:
-            if "401" in e.split("groq", 1)[1][:200]:
-                return "The AI Coach couldn't use the Groq key (rejected). Please check GROQ_API_KEY in .env."
-            return ("Both AI services are unavailable right now (Meta: " + ("no credits" if "402" in e else "error") +
-                    ", Groq: busy or unreachable). Please try again in a minute.")
+            return ("The AI Coach has no API key yet. Add MODEL_API_KEY (Meta), GROQ_API_KEY or GEMINI_API_KEY "
+                    "to the .env file (or the host's environment settings) and restart.")
+        if (llm.groq_key() or llm.gemini_key()) and ("groq" in e or "gemini" in e):
+            return "The AI Coach is busy right now - all AI services are unavailable for a moment. Please try again in a minute."
         if "401" in e or "unauthorized" in e or "invalid api key" in e:
             return "The AI Coach isn't configured correctly (API key rejected). Please check MODEL_API_KEY."
         if "402" in e or "billing" in e:

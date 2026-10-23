@@ -55,6 +55,35 @@ India's talent trials reach the children who are already in a sports system. A c
 - A coach's note in the player's language.
 - A next session that adapts to the player: faster raiders, more hard bowler clips and a longer combo where they are strong, and easier settings where they are weak.
 
+## Upper-body game (no tripod needed)
+
+Most players can't put the camera 3 m away. At the start the game watches for a few seconds:
+
+- **Whole body in view** → the full game above.
+- **Only the waist up** (sitting at a laptop, phone propped close) → the **upper-body game**:
+  Shadow Boxing (punch the pads - raises the heart rate; a punch only counts after the fists come back to the body) →
+  Heart Scan → Read the Bowler (**lean** left or right instead of stepping) → Dance-off (no squats or hands-on-hips) →
+  final scan.
+- Then: **"Unlock 3 bonus levels?"** Yes → step back, and Raider Dodge, Log Jump and Bull Run follow (the run becomes a
+  full-body run). "Show my results" → results now. Voice ("yes" / "results") and keys (Space / R) work too.
+- Reflexes, agility and power are shown as **"not measured" - never zero**. The result and the verified card say
+  "Measured: upper body", and the scope is part of the signature.
+- **Separate leaderboards** for full-body and upper-body runs. The server decides the scope from what was measured.
+- During a full-body level, a spoken hint asks the player to step back if the feet leave the picture.
+
+## The player in the world
+
+- **Placed in the scene at a set size:** standing on the ground line, about 62 % of the screen tall, wherever the
+  player stands; in the upper-body game a foreground player cut off at the waist. Every level draws through the same
+  mapping, so raiders, logs and pads stay aligned with the body.
+- **Lit like the scene:** the cut-out is auto-brightened (dim rooms) and tinted with the world's light - warm at the
+  kabaddi sunset, cool under the stadium floodlights, pink on the dance floor.
+- **Clean edges:** the person mask is smoothed over time, faint "ghost" areas are cut away, and a thin rim light
+  replaces the thick glow. A soft shadow sits under the feet.
+- **Automatic avatar:** when the room is too dark or the cut-out keeps breaking up for 3 s, the cartoon avatar takes
+  over (with a small mirror), and the cut-out returns when the light is good again.
+- Measurements use the raw camera frames, so none of this changes a score.
+
 ## Meta models: each one does a real job and each has a fallback
 
 | Model | Job in the Arena | If it is not available |
@@ -89,7 +118,7 @@ The page header shows a live chip (`Meta AI: SAM ✓ Spark ✓ Voice ✓`), so j
 
 ## Run it
 
-1. In `.env` (never commit it): `MODEL_API_KEY=...` and/or `GROQ_API_KEY=...`. Both are optional: without them the whole game still works, using the fallbacks. With both, `llm.py` tries Meta's Muse Spark first; if Meta answers 401/402/403/404 (e.g. no credits) it moves on to Groq (Muse Spark open weights, then Llama 3.3 70B; Qwen for photos; Whisper for voice) and skips the failed one for 15 minutes. The coach, the chatbot and the photo readers show which model answered.
+1. In `.env` (never commit it): `MODEL_API_KEY=...`, `GROQ_API_KEY=...` and/or `GEMINI_API_KEY=...`. All are optional: without them the whole game still works, using the fallbacks. `llm.py` tries Meta's Muse Spark first; if Meta answers 401/402/403/404 (e.g. no credits) it moves on to Groq (Muse Spark open weights, then Llama 3.3 70B; Qwen for photos; Whisper for voice), then Google Gemini as the last resort, and skips a failed one for 15 minutes. When Gemini answers, the interface shows "DeepFit AI"; `/api/arena/status` lists the real models.
 2. Start the app: `python app.py`.
 3. On this computer, open **http://localhost:7860/arena**.
    - No camera, or recording the demo? Open **http://localhost:7860/arena?sim=1**. A simulated player plays the whole game.

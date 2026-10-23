@@ -13,6 +13,15 @@ Six talent traits, each 0-100 (STARTER scales - tune them with field data):
     anticipation  reading the bowler before the ball is seen    (Read the Bowler)
     learning      how fast errors fall over 3 tries             (Copy the Combo)
     heart         heart-rate recovery after effort (camera PPG) (Pulse checks)
+
+Two ways to play (scope):
+    full   the whole body was in view: every level.
+    upper  only from the waist up (sitting at a laptop, phone propped close): Shadow Boxing
+           (raises the heart rate), Heart Scan, Read the Bowler (by leaning), Dance-off and the
+           final scan. Reflexes, agility and power are then "not measured" - never zero - and the
+           run goes on the upper-body leaderboard. A player who unlocks the bonus levels (Raider
+           Dodge, Log Jump, Bull Run) becomes a full run.
+The scope is decided here from what was measured, not taken from the browser.
 """
 
 from statistics import median
@@ -141,10 +150,26 @@ def _stars(ratio: Optional[float], hi: float = 0.9, mid: float = 0.6) -> int:
     return 3 if ratio >= hi else 2 if ratio >= mid else 1
 
 
+FULL_BODY_LEVELS = ("dodge", "jump", "escape")
+
+
+def scope(raw: Dict) -> str:
+    """'full' when any whole-body level was played, else 'upper'."""
+    raw = raw if isinstance(raw, dict) else {}
+    return "full" if any(raw.get(k) for k in FULL_BODY_LEVELS) else "upper"
+
+
 def points(raw: Dict) -> Dict:
     """Game points, stars per level (0-3) and the player's rank."""
     raw = raw if isinstance(raw, dict) else {}
     lv: Dict[str, Dict] = {}
+
+    bx = raw.get("boxing") if isinstance(raw.get("boxing"), dict) else None
+    if bx:
+        secs = _num(bx.get("secs"), 1, 120) or 20
+        hits = _num(bx.get("hits"), 0, 1000) or 0
+        lv["boxing"] = {"points": round(50 * min(hits, 3 * secs)), "max": round(150 * secs),
+                        "stars": 3 if hits / secs >= 2 else 2 if hits / secs >= 1.2 else 1}
 
     d = [t for t in (raw.get("dodge") or []) if isinstance(t, dict)][:30]
     if d:
@@ -212,7 +237,8 @@ def points(raw: Dict) -> Dict:
     ratio = total / best_total
     rank = next((name, icon) for th, name, icon in RANKS if ratio >= th)
     return {"total": total, "max": best_total, "percent": round(100 * ratio), "levels": lv,
-            "stars": sum(v["stars"] for v in lv.values()), "max_stars": 3 * len(lv), "rank": rank[0], "rank_icon": rank[1]}
+            "stars": sum(v["stars"] for v in lv.values()), "max_stars": 3 * len(lv), "rank": rank[0], "rank_icon": rank[1],
+            "scope": scope(raw)}
 
 
 def _max_streak_sum(n: int, per: float) -> float:
@@ -239,8 +265,13 @@ def profile(raw: Dict) -> Dict:
         sports.append({"sport": name, "match": round(match), "based_on": [LABELS[k] for k in used]})
     sports.sort(key=lambda s: -s["match"])
     best = max(((k, v) for k, v in traits.items() if v is not None), key=lambda kv: kv[1], default=(None, None))
+    sc = scope(raw)
+    not_measured = [k for k, v in traits.items() if v is None]
     return {
         "traits": traits, "labels": LABELS, "overall": overall, "sports": sports[:3],
+        "scope": sc, "measured": [k for k, v in traits.items() if v is not None], "not_measured": not_measured,
+        "scope_note": ("Measured: upper body. Reflexes, agility and power need the whole body in view - "
+                       "they were not measured (not zero)." if sc == "upper" else "Measured: full body."),
         "top_trait": LABELS.get(best[0]) if best[0] else None,
         "details": {"dodge": d_dodge, "jump": d_jump, "bowler": d_bowl, "combo": d_combo, "pulse": d_pulse,
                     "calibration": (raw.get("calib") or {}).get("method")},

@@ -88,7 +88,7 @@
         <ol id="board-today"><li class="muted">Loading…</li></ol>
     </div>
 
-    <p class="setup-tip">📱 Phone or laptop at waist height, 2–3 m away, room to step left and right. Your video never leaves this device.</p>
+    <p class="setup-tip">📱 Whole body in view (2–3 m away) for all 6 levels - or play close from the waist up: the upper-body game starts by itself, with 3 bonus levels if you step back later. Your video never leaves this device.</p>
     <p id="ai-status" class="muted small"></p>
     {% if cfg.sim %}<p class="small warn-text">DEMO MODE - a computer player plays. Results are marked "simulated".</p>{% endif %}
     <p id="start-error" class="error" role="alert"></p>
@@ -114,6 +114,20 @@
     <div class="clear-stat" id="clear-stat"></div>
 </section>
 
+<!-- bonus question (upper-body game) -->
+<section id="bonus" class="bonus" hidden role="dialog" aria-modal="true" aria-labelledby="bonus-title">
+    <div class="bonus-card">
+        <div class="bonus-icons" aria-hidden="true">🤼 🪵 🐂</div>
+        <h2 id="bonus-title">UNLOCK 3 BONUS LEVELS?</h2>
+        <p id="bonus-text"></p>
+        <div class="bonus-actions">
+            <button id="bonus-yes" class="big-btn">✅ Yes</button>
+            <button id="bonus-no" class="big-btn alt">🏁 Show my results</button>
+        </div>
+        <p class="muted small">Voice: "yes" / "results" · Keys: Space = yes, R = results</p>
+    </div>
+</section>
+
 <!-- results -->
 <section id="results" class="panel wide" hidden aria-labelledby="res-title">
     <div class="victory">
@@ -130,7 +144,8 @@
         </div>
     </div>
 
-    <h2 class="sec">Your hidden talent profile</h2>
+    <h2 class="sec">Your hidden talent profile <span id="scope-badge" class="scope-badge"></span></h2>
+    <p id="scope-note" class="muted small"></p>
     <div class="res-grid">
         <div>
             <svg id="radar" viewBox="0 0 320 300" role="img" aria-label="Talent profile chart"></svg>
@@ -165,7 +180,8 @@
         </div>
     </div>
     <div class="board">
-        <h3>🏆 Leaderboard</h3>
+        <h3>🏆 Leaderboard
+            <span class="board-tabs"><button class="board-scope on" data-scope="full">🧍 Full body</button><button class="board-scope" data-scope="upper">🙋 Upper body</button></span></h3>
         <div class="board-cols">
             <div><div class="muted small">TODAY</div><ol id="board-today-full"></ol></div>
             <div><div class="muted small">ALL TIME</div><ol id="board-all"></ol></div>
@@ -175,6 +191,6 @@
 </section>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script type="module" src="/static/arena/arena.js?v=2"></script>
+<script type="module" src="/static/arena/arena.js?v=3"></script>
 </body>
 </html>

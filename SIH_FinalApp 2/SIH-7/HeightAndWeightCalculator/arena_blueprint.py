@@ -57,6 +57,8 @@ PLAN_LIMITS = {"raider_window_ms": (900, 2200), "log_speed": (0.7, 1.6), "bowler
                "combo_length": (3, 6)}
 
 INTENT_WORDS = {
+    "yes": ["yes", "yeah", "bonus", "हाँ", "हां", "हा ", "जी", "అవును", "ఔను", "సరే"],
+    "no": ["no thanks", "nahi", "नहीं", "వద్దు", "లేదు"],
     "start": ["start", "begin", "go", "play", "ready", "शुरू", "शुरु", "चलो", "स्टार्ट", "ప్రారంభ", "మొదలు", "స్టార్ట్", "రెడీ"],
     "next": ["next", "skip", "continue", "अगला", "आगे", "తర్వాత", "తరువాత", "ముందుకు", "నెక్స్ట్"],
     "repeat": ["repeat", "again", "say that", "फिर से", "दोबारा", "दुबारा", "మళ్ళీ", "మళ్లీ", "తిరిగి"],
@@ -173,9 +175,9 @@ def _intent(text: str, lang: str) -> str:
             "English, Hindi or Telugu (or mix them).",
             f"Spoken command: {text!r}",
             {"type": "object", "properties": {"intent": {"type": "string",
-                                                         "enum": ["start", "next", "repeat", "results", "help", "unknown"]}},
+                                                         "enum": ["start", "next", "repeat", "results", "help", "yes", "no", "unknown"]}},
              "required": ["intent"], "additionalProperties": False}, name="intent", timeout=15)
-        if out and out.get("intent") in ("start", "next", "repeat", "results", "help"):
+        if out and out.get("intent") in ("start", "next", "repeat", "results", "help", "yes", "no"):
             return out["intent"]
     return "unknown"
 
@@ -310,7 +312,9 @@ def arena_coach():
         "for children and adults in India. Write warmly and simply for the player (and their parents), never shame, no "
         "medical claims, no promises of selection. Scores are 0-100 starter scales; pulse values are camera estimates. "
         f"Write every text field in {LANGS[lang]} (simple, spoken style)."
-        " Design the next session so it is slightly harder where the player is strong and gives more practice where they are weak.")
+        " Design the next session so it is slightly harder where the player is strong and gives more practice where they are weak."
+        " If profile.scope is 'upper', the player played from the waist up: traits that are null were NOT measured - never call"
+        " them weak; invite the player to step back next time to unlock the full-body levels.")
     user = json.dumps({"player": {"name": name or None, "age": age}, "profile": prof, "plan_used": plan}, ensure_ascii=False)
     out = meta_models.chat_json(system, user, COACH_SCHEMA, name="arena_coach")
     if not out or not isinstance(out.get("next_session"), dict):
@@ -319,7 +323,7 @@ def arena_coach():
         ns = out["next_session"]
         out["next_session"] = {**_clamp_plan(ns), "reason": str(ns.get("reason", ""))[:300]}
         import llm
-        out["source"], out["model"] = "muse-spark", llm.last_used.get("chat")
+        out["source"], out["model"] = "muse-spark", llm.last_label.get("chat")
         res = out
     return jsonify({"ok": True, "coach": res, "profile": prof, "points": arena_score.points(d.get("raw"))})
 
@@ -346,7 +350,7 @@ def _payload(doc: Dict) -> Dict:
     return {"id": str(doc["_id"]), "athlete_ref": doc.get("athlete_ref"), "display": doc.get("display"),
             "created": doc["created"], "traits": p["traits"], "overall": p["overall"],
             "sports": [s["sport"] for s in p["sports"]], "raw_hash": doc["raw_hash"],
-            "points": (doc.get("points") or {}).get("total")}
+            "points": (doc.get("points") or {}).get("total"), **({"scope": doc["scope"]} if doc.get("scope") else {})}
 
 
 @arena_bp.route("/api/arena/save", methods=["POST"])
@@ -370,6 +374,7 @@ def arena_save():
         "age": (ath or {}).get("age") or d.get("age"), "lang": d.get("lang") if d.get("lang") in LANGS else "en",
         "mode": d.get("mode") if d.get("mode") in ("standard", "blind", "deaf") else "standard",
         "camera": "simulated" if d.get("simulated") else "camera",
+        "scope": arena_score.scope(raw),
         "raw": raw, "raw_hash": hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest(),
         "profile": prof,
         "points": arena_score.points(raw), "points_total": arena_score.points(raw)["total"],
@@ -392,12 +397,17 @@ def arena_save():
 
 # ------------------------------------------------------------------ leaderboard
 
-def _board_rows(include_sim: bool = False, limit: int = 300):
+def _scope_of(r: Dict) -> str:
+    return r.get("scope") or "full"          # games saved before upper-body mode were all full-body
+
+
+def _board_rows(include_sim: bool = False, limit: int = 300, scope: str = "full"):
+    """Leaderboard rows for one scope: full-body and upper-body runs are ranked separately."""
     db = get_db()
     if db is None:
         return []
     proj = {"display": 1, "points_total": 1, "points": 1, "created": 1, "camera": 1, "raw.quick": 1, "profile.overall": 1,
-            "athlete_ref": 1, "mode": 1}
+            "athlete_ref": 1, "mode": 1, "scope": 1}
     try:
         cur = db.arena_sessions.find({} if include_sim else {"camera": "camera"}, proj)
         if hasattr(cur, "limit"):        # a real MongoDB cursor (simple test stand-ins return lists)
@@ -406,6 +416,7 @@ def _board_rows(include_sim: bool = False, limit: int = 300):
     except Exception as e:
         log_error(f"leaderboard failed: {e}")
         return []
+    rows = [r for r in rows if _scope_of(r) == scope]
     rows.sort(key=lambda r: -(r.get("points_total") or 0))
     return rows
 
@@ -415,23 +426,25 @@ def _entry(r: Dict) -> Dict:
     return {"name": r.get("display") or "Player", "points": r.get("points_total") or 0, "rank": pts.get("rank"),
             "rank_icon": pts.get("rank_icon"), "stars": pts.get("stars"), "overall": (r.get("profile") or {}).get("overall"),
             "when": str(r.get("created") or "")[:10], "simulated": r.get("camera") == "simulated",
-            "length": "quick" if (r.get("raw") or {}).get("quick", True) else "full", "mode": r.get("mode")}
+            "length": "quick" if (r.get("raw") or {}).get("quick", True) else "full", "mode": r.get("mode"),
+            "scope": _scope_of(r)}
 
 
 def _board_position(doc: Dict) -> Dict:
-    rows = _board_rows(include_sim=doc.get("camera") == "simulated")
+    rows = _board_rows(include_sim=doc.get("camera") == "simulated", scope=_scope_of(doc))
     today = str(doc.get("created", ""))[:10]
     day = [r for r in rows if str(r.get("created", ""))[:10] == today]
     pos = lambda rs: next((i + 1 for i, r in enumerate(rs) if str(r.get("_id")) == str(doc["_id"])), None)
-    return {"today": pos(day), "today_players": len(day), "all_time": pos(rows), "players": len(rows)}
+    return {"today": pos(day), "today_players": len(day), "all_time": pos(rows), "players": len(rows), "scope": _scope_of(doc)}
 
 
 @arena_bp.route("/api/arena/leaderboard")
 def arena_leaderboard():
     """Top players today and of all time (simulated games only when the page itself is in simulation mode)."""
-    rows = _board_rows(include_sim=request.args.get("sim") == "1")
+    sc = "upper" if request.args.get("scope") == "upper" else "full"
+    rows = _board_rows(include_sim=request.args.get("sim") == "1", scope=sc)
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    return jsonify({"ok": True, "today": [_entry(r) for r in rows if str(r.get("created", ""))[:10] == today][:10],
+    return jsonify({"ok": True, "scope": sc, "today": [_entry(r) for r in rows if str(r.get("created", ""))[:10] == today][:10],
                     "all_time": [_entry(r) for r in rows][:10]})
 
 

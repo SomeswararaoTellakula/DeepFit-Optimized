@@ -62,6 +62,7 @@
                 {% for name, x, y in radar.labels %}<text x="{{ x }}" y="{{ y }}" fill="#cbd5e1" font-size="12" font-weight="700" text-anchor="middle" dominant-baseline="middle">{{ name }}</text>{% endfor %}
                 <polygon class="shape" points="{{ radar.shape }}" fill="#22d3ee55" stroke="#22d3ee" stroke-width="3"/>
             </svg>
+            <div style="text-align:center;margin-bottom:6px"><span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:.8rem;font-weight:800;background:{{ '#7c3aed' if prof.scope == 'upper' else '#0e7490' }};color:#fff">{{ '🙋 Measured: upper body' if prof.scope == 'upper' else '🧍 Measured: full body' }}</span></div>
             <div style="text-align:center;font-weight:900">Talent score <span class="big" style="font-size:2.4rem">{{ prof.overall|round|int if prof.overall is not none else '–' }}</span></div>
             {% if doc.points %}
             <div style="text-align:center;margin-top:6px">
@@ -74,7 +75,7 @@
         <div>
             <ul class="traits">
                 {% for k, label in labels.items() %}{% set v = prof.traits.get(k) %}
-                <li><span>{{ label }}</span><span class="bar"><div style="width:{{ v or 0 }}%"></div></span><b>{{ v|round|int if v is not none else '–' }}</b></li>
+                <li{% if v is none %} style="opacity:.6"{% endif %}><span>{{ label }}</span><span class="bar"><div style="width:{{ v or 0 }}%"></div></span><b>{% if v is not none %}{{ v|round|int }}{% elif prof.scope == 'upper' and k in ['reflex', 'agility', 'power'] %}<small>not measured</small>{% else %}–{% endif %}</b></li>
                 {% endfor %}
             </ul>
             {% if prof.sports %}

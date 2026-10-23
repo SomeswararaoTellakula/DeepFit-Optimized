@@ -164,3 +164,24 @@ h3 { margin: 12px 0 6px; }
 html[lang=hi] .intro-title, html[lang=te] .intro-title, html[lang=hi] .clear-title, html[lang=te] .clear-title {
   -webkit-text-stroke: 0; background: none; color: var(--gold); text-shadow: 0 4px 0 #1e1b4b, 0 0 18px #000; font-weight: 800; }
 html[lang=hi] .hud-level, html[lang=te] .hud-level { font-weight: 800; }
+
+/* bonus question (upper-body game) */
+.bonus { position: fixed; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; padding: 16px;
+         background: radial-gradient(circle at 50% 40%, rgba(76, 29, 149, 0.82), rgba(2, 6, 23, 0.92)); }
+.bonus[hidden] { display: none !important; }
+.bonus-card { max-width: 560px; width: 100%; text-align: center; background: rgba(30, 27, 75, 0.92); border: 3px solid var(--gold, #fde047);
+              border-radius: 24px; padding: 26px 22px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.bonus-icons { font-size: 3rem; letter-spacing: 0.3em; }
+.bonus-card h2 { font-family: var(--title); color: var(--gold, #fde047); margin: 6px 0 8px; font-size: clamp(1.3rem, 4vw, 2rem); }
+.bonus-card p { color: #e9e5ff; line-height: 1.5; }
+.bonus-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 16px 0 6px; }
+/* upper-body / full-body badge + "not measured" traits */
+.scope-badge { display: inline-block; margin-left: 8px; padding: 3px 12px; border-radius: 999px; font-size: 0.8rem; vertical-align: middle;
+               background: #0e7490; color: #ecfeff; font-family: inherit; }
+.scope-badge.upper { background: #7c3aed; }
+.traits li.nm { opacity: 0.6; }
+.traits li.nm b { font-size: 0.72rem; font-weight: 700; color: #c4b5fd; }
+.board-tabs { display: inline-flex; gap: 6px; margin-left: 10px; vertical-align: middle; }
+.board-scope { font: inherit; font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; border: 1px solid #6d28d9; background: transparent;
+               color: #e9e5ff; cursor: pointer; }
+.board-scope.on { background: #6d28d9; }
