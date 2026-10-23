@@ -1,0 +1,10 @@
+.git
+.env
+**/.env
+.DS_Store
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+deepfit_mobile
+mobile_integrations

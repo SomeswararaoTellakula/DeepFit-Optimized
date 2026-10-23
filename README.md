@@ -4,8 +4,9 @@ emoji: 🏋️
 colorFrom: blue
 colorTo: indigo
 sdk: docker
-python_version: "3.9"
+python_version: "3.11"
 app_file: app.py
+app_port: 7860
 pinned: false
 ---
 
@@ -47,6 +48,15 @@ DeepFit is a comprehensive, AI-driven fitness platform designed to provide accur
 ---
 
 ## ⚙️ Installation & Setup
+
+### Deploy to Hugging Face Spaces
+
+This repository uses the Docker Space SDK. In the Space's **Settings → Variables and secrets**, add:
+
+- `MONGODB_URI` — a reachable MongoDB connection string (for example, a MongoDB Atlas URI).
+- `SECRET_KEY` — a long, randomly generated value to keep sessions stable across restarts.
+
+Optional AI integrations can be configured with `MODEL_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY`. Keep all credentials in Space secrets, not in source files. The app listens on port `7860`.
 
 ### Prerequisites
 - Python 3.9+

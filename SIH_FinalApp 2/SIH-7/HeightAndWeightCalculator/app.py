@@ -7,7 +7,6 @@ except ImportError:
 
 from flask import Flask, render_template, request, session, redirect, url_for, send_from_directory, jsonify, Response
 from flask_cors import CORS
-from pymongo import MongoClient
 from werkzeug.utils import secure_filename
 import cv2
 import numpy as np
@@ -52,10 +51,9 @@ def dashboard():
     
     user = None
     try:
-        # Direct MongoDB connection
-        from pymongo import MongoClient
-        client = MongoClient("mongodb://localhost:27017/")
-        db_conn = client["sih2573"]
+        db_conn = get_db()
+        if db_conn is None:
+            raise RuntimeError("Database connection is unavailable")
         
         print(f"Looking for user with ID: {session['user_id']}")  # Debug
         user_doc = db_conn.users.find_one({'_id': ObjectId(session['user_id'])})
@@ -147,9 +145,8 @@ def _identity_response(user_key, reference_photo, current_frame_base64, label):
     })
 
 # Configure secure sessions
-# Use a stable secret key from environment or a hardcoded fallback
-# This prevents sessions from being invalidated on every app restart
-app.secret_key = os.environ.get('SECRET_KEY', 'deepfit_secure_session_key_2024_sih_final')
+# Configure SECRET_KEY in hosted deployments to keep sessions stable across restarts.
+app.secret_key = os.environ.get('SECRET_KEY') or secrets.token_hex(32)
 init_session_settings(app)
 # Pick up template edits without restarting the server
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -303,7 +300,7 @@ mongodb_connected = db is not None
 
 # Initialize dynamic benchmark system
 benchmark_system = DynamicBenchmarkSystem(
-    mongo_uri="mongodb://localhost:27017/", 
+    mongo_uri=os.environ.get('MONGODB_URI', 'mongodb://localhost:27017/'),
     db_name="sih2573"
 )
 
