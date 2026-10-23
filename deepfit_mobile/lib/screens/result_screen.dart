@@ -50,6 +50,7 @@ class _ResultScreenState extends State<ResultScreen> {
     final passportUrl = server?['passport_url'] as String?;
     final coach = (r['coachability'] as Map?)?.cast<String, dynamic>();
     final maturity = (r['maturity'] as Map?)?.cast<String, dynamic>();
+    final load = r['load_kg'] != null ? (r['load_analysis'] as Map?)?.cast<String, dynamic>() : null;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.info.name), automaticallyImplyLeading: false, actions: [
@@ -91,6 +92,7 @@ class _ResultScreenState extends State<ResultScreen> {
             _statusPanel(),
             if (coach != null) _coachPanel(coach),
             if (maturity != null) _maturityPanel(maturity),
+            if (load != null) _loadPanel(r, load, bench),
             if (passportUrl != null)
               Panel(
                 borderColor: DeepFitColors.green,
@@ -215,6 +217,60 @@ class _ResultScreenState extends State<ResultScreen> {
         const SizedBox(height: 6),
         for (final (i, t) in tips.indexed)
           Text('Tip after try ${i + 1}: $t', style: const TextStyle(color: DeepFitColors.muted, fontSize: 13)),
+      ]),
+    );
+  }
+
+  Widget _loadPanel(Map<String, dynamic> r, Map<String, dynamic> a, Map<String, dynamic>? b) {
+    final check = (r['load_check'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final seen = check['seen'] == true
+        ? 'dumbbell seen by SAM 3.1'
+        : check['seen'] == false
+            ? 'SAM 3.1 did not see a dumbbell'
+            : 'declared by you';
+    final reps = (r['reps_detail'] as List?) ?? const [];
+    double maxV = 0.1;
+    for (final x in reps) {
+      final v = ((x as Map)['speed'] as num?)?.toDouble() ?? 0;
+      if (v > maxV) maxV = v;
+    }
+    Widget row(String k, String v) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(children: [
+            Expanded(child: Text(k, style: const TextStyle(color: DeepFitColors.muted, fontSize: 13))),
+            Text(v, style: const TextStyle(fontWeight: FontWeight.w700)),
+          ]),
+        );
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Weighted curl - ${fmtValue(r['load_kg'])} kg', style: const TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        row('Clean reps (no swing, elbows pinned)', '${a['clean_reps']} of ${a['reps']}'),
+        row('Lifting speed first -> last', '${fmtValue(a['first_speed_m_s'])} -> ${fmtValue(a['last_speed_m_s'])} m/s'),
+        row('Elbow angle at the top', '${fmtValue(a['mean_top_angle_deg'])}°'),
+        row('Body swing / elbow drift', '${fmtValue(a['mean_swing_pct'])}% / ${fmtValue(a['mean_drift_pct'])}%'),
+        row('Estimated 1-rep max (each arm)', a['est_1rm_kg'] == null ? '-' : '≈ ${fmtValue(a['est_1rm_kg'])} kg'),
+        if (a['next_load_kg'] != null) row('Next time try', '${fmtValue(a['next_load_kg'])} kg'),
+        row('Weight check', seen),
+        if (b != null && b['target'] != null && (b['target'] as num) > 1)
+          row('Target with ${fmtValue(b['benchmark_load_kg'])} kg', '≥ ${fmtValue(b['target'])} clean reps'),
+        if (reps.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 60,
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              for (final x in reps)
+                Expanded(
+                  child: Container(
+                    height: 4 + 56 * ((((x as Map)['speed'] as num?)?.toDouble() ?? 0) / maxV),
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    color: x['clean'] == true ? DeepFitColors.green : DeepFitColors.red,
+                  ),
+                ),
+            ]),
+          ),
+          const Text('Speed of each rep (green = clean)', style: TextStyle(color: DeepFitColors.muted, fontSize: 12)),
+        ],
       ]),
     );
   }

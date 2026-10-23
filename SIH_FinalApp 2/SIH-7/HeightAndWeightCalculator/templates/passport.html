@@ -42,7 +42,7 @@
                 <div class="muted">{% if p.age %}Age {{ p.age }}{% endif %}{% if p.gender %} · {{ p.gender }}{% endif %} · {{ p.mode }} mode</div>
             </div>
             <div style="text-align:right">
-                <div class="big">{{ ('%g' % p.value) if p.value is number else p.value }}<span style="font-size:1rem;color:var(--muted)"> {{ p.unit }}</span></div>
+                <div class="big">{{ ('%g' % p.value) if p.value is number else p.value }}<span style="font-size:1rem;color:var(--muted)"> {{ p.unit }}{% if p.load_kg %} × {{ '%g' % p.load_kg }} kg{% endif %}</span></div>
                 {% if rating %}<div class="rating-{{ rating.split(' ')[0] }}" style="font-weight:800">{{ rating }}{% if target is not none %} · target {{ '%g' % target }} {{ p.unit }}{% endif %}</div>{% endif %}
             </div>
         </div>
@@ -79,6 +79,19 @@
     </div>
     {% endif %}
 
+    {% if load %}
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">🏋️ Weighted curl - {{ '%g' % p.load_kg }} kg dumbbell</h2>
+        <div class="grid3">
+            <div class="stat"><div class="k">Clean reps</div><div class="v">{{ load.clean_reps }} / {{ load.reps }}</div><div class="k">no swing, elbows pinned</div></div>
+            <div class="stat"><div class="k">Lifting speed</div><div class="v" style="font-size:1.05rem">{{ load.first_speed_m_s if load.first_speed_m_s is not none else '–' }} → {{ load.last_speed_m_s if load.last_speed_m_s is not none else '–' }} m/s</div>
+                <div class="k">{% if load.velocity_loss_pct is not none %}slowed {{ load.velocity_loss_pct }}%{% endif %}</div></div>
+            <div class="stat"><div class="k">Estimated 1-rep max</div><div class="v">{{ ('≈ %g kg' % load.est_1rm_kg) if load.est_1rm_kg else '–' }}</div><div class="k">each arm{% if load.intensity %} · felt {{ load.intensity }}{% endif %}</div></div>
+        </div>
+        <div class="muted" style="margin-top:10px">Elbow angle at the top {{ load.mean_top_angle_deg }}° · body swing {{ load.mean_swing_pct if load.mean_swing_pct is not none else '–' }}% · elbow drift {{ load.mean_drift_pct if load.mean_drift_pct is not none else '–' }}%
+            · weight check: {{ 'dumbbell seen by SAM 3.1 ✓' if load_check.seen == true else ('SAM 3.1 did not see a dumbbell ⚠' if load_check.seen == false else 'declared by the athlete') }}</div>
+    </div>
+    {% endif %}
     {% if has_replay %}
     <div class="card">
         <h2 style="font-size:1.05rem;margin:0 0 6px">Movement replay <span class="muted" style="font-weight:400;font-size:.85rem">(skeleton only - no video or face is stored)</span></h2>

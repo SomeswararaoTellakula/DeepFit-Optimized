@@ -20,6 +20,7 @@ they can be tuned after real testing.
 import math
 import time
 from collections import deque
+from statistics import median
 from typing import Dict, List, Optional
 
 # MediaPipe Pose landmark indices
@@ -35,6 +36,9 @@ L_HEEL, R_HEEL = 29, 30
 L_FOOT, R_FOOT = 31, 32
 
 VIS = 0.5  # minimum landmark visibility
+FOREARM_RATIO = 0.146      # forearm length / standing height (Drillis & Contini) - turns pixels into cm for curls
+MAX_SWING_PCT = 15         # curls: body swing allowed, % of shoulder width
+MAX_DRIFT_PCT = 25         # curls: elbow drifting up/forward allowed, % of upper-arm length
 
 
 class Pose:
@@ -531,10 +535,34 @@ class DumbbellCurls(Exercise):
     blind_adaptation = ["Spoken 'left' / 'right' counts", "Helper hands over the weights, then steps out of view"]
     deaf_adaptation = ["Green flash per rep; captions show which arm was counted"]
 
+    EXTENDED = 140                     # elbow angle that counts as "arm hanging" when timing the lift
+
     def __init__(self, **kw):
         super().__init__(**kw)
         self.state = {"left": "down", "right": "down"}
         self.counts = {"left": 0, "right": 0}
+        # weight analysis (does not change counting, feedback or events - the phone app counts the same way)
+        self.load_kg: Optional[float] = None
+        self.body_weight_kg: Optional[float] = None
+        self.load_check: Optional[Dict] = None          # filled by the server when SAM 3.1 looked for the dumbbell
+        self.reps_detail: List[Dict] = []
+        self._forearm = {"left": deque(maxlen=90), "right": deque(maxlen=90)}
+        self._upper = {"left": deque(maxlen=90), "right": deque(maxlen=90)}
+        self._sw: deque = deque(maxlen=90)
+        self._track: Dict[str, Optional[Dict]] = {"left": None, "right": None}
+        self._rest: Dict[str, Optional[Dict]] = {"left": None, "right": None}   # body position with the arm hanging
+
+    def configure(self, load_kg=None, body_weight_kg=None, **_):
+        try:
+            if load_kg is not None and 0 < float(load_kg) <= 60:
+                self.load_kg = round(float(load_kg), 2)
+        except (TypeError, ValueError):
+            pass
+        try:
+            if body_weight_kg is not None and 15 <= float(body_weight_kg) <= 200:
+                self.body_weight_kg = float(body_weight_kg)
+        except (TypeError, ValueError):
+            pass
 
     def process(self, pose, t):
         seen = False
@@ -543,21 +571,95 @@ class DumbbellCurls(Exercise):
                 continue
             seen = True
             a = angle(pose.p(s), pose.p(e), pose.p(w))
+            self._measure(arm, pose, (s, e, w), a, t)
             if self.state[arm] == "down" and a < self.UP:
                 self.state[arm] = "up"
                 self.counts[arm] += 1
                 self.count += 1
                 self.feedback = f"{arm.title()} {self.counts[arm]}"
                 self.event("rep", f"{arm} {self.counts[arm]}")
+                if self._track[arm] is not None:
+                    self._track[arm]["counted"] = True
             elif self.state[arm] == "up" and a > self.DOWN:
                 self.state[arm] = "down"
+                self._finish_rep(arm, t)
         if not seen:
             self.feedback = "Face the camera - shoulders, elbows and wrists visible"
+
+    # ---- how the weight moved, per rep
+    def _measure(self, arm, pose, ids, a, t):
+        s, e, w = ids
+        (sx, sy), (ex_, ey), (wx, wy) = pose.p(s), pose.p(e), pose.p(w)
+        if a >= 150:
+            self._forearm[arm].append(math.hypot(wx - ex_, wy - ey))
+            self._upper[arm].append(math.hypot(ex_ - sx, ey - sy))
+        sh = pose.mid(L_SHOULDER, R_SHOULDER) if pose.vis(L_SHOULDER, R_SHOULDER) else None
+        if sh is not None and arm == "left":
+            self._sw.append(pose.dist(L_SHOULDER, R_SHOULDER))
+        tr = self._track[arm]
+        if self.state[arm] == "down":
+            # reference posture: the arm at its straightest (swing and elbow drift are measured from here)
+            rest = self._rest[arm]
+            if rest is None or a >= rest["a"] - 5:
+                self._rest[arm] = {"a": max(a, rest["a"]) if rest else a, "sh": sh, "rel": ey - sy, "wy": wy}
+        if self.state[arm] == "down" and a >= self.EXTENDED:
+            # arm still hanging: the next rep's lift starts from here
+            rest = self._rest[arm]
+            self._track[arm] = {"t0": t, "wy0": wy, "rel0": rest["rel"], "sh0": rest["sh"], "min_a": a, "t_top": t,
+                                "wy_top": wy, "min_rel": ey - sy, "swing": 0.0, "counted": False}
+            if sh is not None and rest["sh"] is not None:
+                self._track[arm]["swing"] = math.hypot(sh[0] - rest["sh"][0], sh[1] - rest["sh"][1])
+            self._track[arm]["min_rel"] = min(rest["rel"], ey - sy)
+            return
+        if tr is None:
+            return
+        if a < tr["min_a"]:
+            tr["min_a"], tr["t_top"] = a, t
+        tr["wy_top"] = min(tr["wy_top"], wy)
+        tr["min_rel"] = min(tr["min_rel"], ey - sy)
+        if sh is not None and tr["sh0"] is not None:
+            tr["swing"] = max(tr["swing"], math.hypot(sh[0] - tr["sh0"][0], sh[1] - tr["sh0"][1]))
+
+    def _finish_rep(self, arm, t):
+        tr, self._track[arm] = self._track[arm], None
+        self._rest[arm] = None
+        if not tr or not tr["counted"]:
+            return
+        fore = median(self._forearm[arm]) if self._forearm[arm] else None
+        upper = median(self._upper[arm]) if self._upper[arm] else None
+        sw = median(self._sw) if self._sw else None
+        cm_per_px = (FOREARM_RATIO * self.height_cm) / fore if fore else None
+        conc = max(tr["t_top"] - tr["t0"], 1 / 30)
+        travel_cm = (tr["wy0"] - tr["wy_top"]) * cm_per_px if cm_per_px else None
+        speed = round(travel_cm / 100 / conc, 2) if travel_cm and travel_cm > 0 else None
+        swing = round(100 * tr["swing"] / sw, 1) if sw else None
+        drift = round(100 * max(0.0, tr["rel0"] - tr["min_rel"]) / upper, 1) if upper else None
+        clean = (swing is None or swing <= MAX_SWING_PCT) and (drift is None or drift <= MAX_DRIFT_PCT)
+        if len(self.reps_detail) < 120:
+            self.reps_detail.append({"arm": arm, "n": self.counts[arm], "t": round(tr["t0"] - (self.started_at or 0), 2),
+                                     "top_angle": round(tr["min_a"], 1), "lift_s": round(conc, 2),
+                                     "lower_s": round(max(t - tr["t_top"], 0), 2), "speed": speed,
+                                     "swing_pct": swing, "drift_pct": drift, "clean": clean})
+
+    def load_summary(self) -> Dict:
+        import curl_load
+        return curl_load.summarise(self.load_kg, self.reps_detail, self.counts)
 
     def stats(self):
         s = super().stats()
         s["left_reps"], s["right_reps"] = self.counts["left"], self.counts["right"]
+        s["load"] = {"load_kg": self.load_kg, "clean_reps": sum(1 for r in self.reps_detail if r["clean"]),
+                     "last": self.reps_detail[-1] if self.reps_detail else None}
         return s
+
+    def result(self):
+        r = super().result()
+        r["load_kg"] = self.load_kg
+        r["load_analysis"] = self.load_summary()
+        r["reps_detail"] = self.reps_detail
+        if self.load_check is not None:
+            r["load_check"] = self.load_check
+        return r
 
 
 class _JumpBase(Exercise):

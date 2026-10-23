@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="{{ doc.lang or 'en' }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit Arena - talent profile</title>
+    {% include 'partials/df_page_style.html' %}
+    <style>
+        .radar { width: 100%; max-width: 340px; display: block; margin: 0 auto; }
+        .traits { list-style: none; padding: 0; margin: 0; }
+        .traits li { display: grid; grid-template-columns: 130px 1fr 40px; gap: 8px; align-items: center; margin: 8px 0; }
+        .traits .bar { margin-top: 0; }
+        .traits .bar > div { background: linear-gradient(90deg, #06b6d4, #22c55e); }
+        .two { display: grid; grid-template-columns: 340px 1fr; gap: 16px; align-items: center; }
+        @media (max-width: 700px) { .two { grid-template-columns: 1fr; } }
+        .coach { border-color: #8b5cf6; background: #1e114566; }
+        .sim { background: #78350f; color: #fde68a; padding: 10px 14px; border-radius: 12px; font-weight: 800; margin-top: 12px; }
+        .qr svg { width: 140px; height: 140px; }
+        @media print {
+            body { background: #fff; color: #000; } .card { border-color: #999; background: #fff; }
+            .muted { color: #444; } #df-back, nav, .no-print { display: none !important; }
+            .radar text { fill: #000; } .radar polygon.shape { fill: #06b6d455; }
+        }
+    </style>
+</head>
+<body>
+<main class="wrap">
+    {% set back_href = '/arena' %}
+    {% include 'partials/back_nav.html' %}
+    {% if scanned %}
+    <section role="status" style="margin:4px 0 14px;padding:22px;border-radius:18px;text-align:center;
+             background:{{ '#052e16' if valid else '#450a0a' }};border:3px solid {{ '#22c55e' if valid else '#ef4444' }}">
+        <div style="font-size:2.2rem;font-weight:900;color:{{ '#4ade80' if valid else '#f87171' }}">
+            {{ '✓ VERIFIED by DeepFit server' if valid else '✗ NOT VALID - do not trust this result' }}</div>
+        <div style="margin-top:6px;font-size:1.05rem">Checked just now: <b>{{ checked_at }}</b></div>
+        <div class="muted" style="margin-top:6px">{{ 'The scores were recalculated from the raw game measurements and the digital signature was re-checked the moment you scanned the code.' if valid else 'The record was changed after DeepFit signed it.' }}</div>
+    </section>
+    {% endif %}
+
+    <div class="muted" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.8rem">DeepFit Arena · talent profile</div>
+    <h1>{{ doc.display }}</h1>
+    <div class="muted">{% if doc.age %}Age {{ doc.age }} · {% endif %}Played {{ doc.created|replace('T', ' ')|replace('Z', ' UTC') }} · {{ doc.mode }} mode · {{ langs.get(doc.lang, 'English') }}</div>
+    {% if doc.camera == 'simulated' %}<div class="sim">⚠ SIMULATED PLAYER - this profile comes from the built-in demo player, not a real person.</div>{% endif %}
+
+    {% if valid %}
+    <div class="card" style="border-color:#16a34a">
+        <div class="row"><span class="badge ok">✓ VERIFIED</span>
+            <span>Every score below was recalculated by the server from the raw game measurements, which are sealed with a digital signature.</span></div>
+    </div>
+    {% else %}
+    <div class="card" style="border-color:#dc2626" role="alert">
+        <div class="row"><span class="badge bad">✗ NOT VALID</span><span>Do not trust this result:</span></div>
+        <ul>{% for x in problems %}<li>{{ x }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+
+    <div class="card two">
+        <div>
+            <svg class="radar" viewBox="0 0 320 300" role="img" aria-label="Talent profile chart">
+                {% for ring in radar.rings %}<polygon points="{{ ring }}" fill="none" stroke="#1e3a5f"/>{% endfor %}
+                {% for x, y in radar.spokes %}<line x1="{{ radar.cx }}" y1="{{ radar.cy }}" x2="{{ x }}" y2="{{ y }}" stroke="#1e3a5f"/>{% endfor %}
+                {% for name, x, y in radar.labels %}<text x="{{ x }}" y="{{ y }}" fill="#cbd5e1" font-size="12" font-weight="700" text-anchor="middle" dominant-baseline="middle">{{ name }}</text>{% endfor %}
+                <polygon class="shape" points="{{ radar.shape }}" fill="#22d3ee55" stroke="#22d3ee" stroke-width="3"/>
+            </svg>
+            <div style="text-align:center;font-weight:900">Talent score <span class="big" style="font-size:2.4rem">{{ prof.overall|round|int if prof.overall is not none else '–' }}</span></div>
+            {% if doc.points %}
+            <div style="text-align:center;margin-top:6px">
+                <span class="badge" style="background:#4c1d95;color:#ede9fe;font-size:.95rem">{{ doc.points.rank_icon }} {{ doc.points.rank }}</span>
+                <span class="badge" style="background:#713f12;color:#fde68a;font-size:.95rem">{{ '{:,}'.format(doc.points.total) }} pts</span>
+                <span class="badge" style="background:#1e3a5f;color:#fde68a;font-size:.95rem">★ {{ doc.points.stars }}/{{ doc.points.max_stars }}</span>
+            </div>
+            {% endif %}
+        </div>
+        <div>
+            <ul class="traits">
+                {% for k, label in labels.items() %}{% set v = prof.traits.get(k) %}
+                <li><span>{{ label }}</span><span class="bar"><div style="width:{{ v or 0 }}%"></div></span><b>{{ v|round|int if v is not none else '–' }}</b></li>
+                {% endfor %}
+            </ul>
+            {% if prof.sports %}
+            <h2 style="font-size:1.05rem;margin:14px 0 6px">Sports to try</h2>
+            <ol style="margin:0;padding-left:20px">{% for s in prof.sports %}<li style="margin:4px 0"><b>{{ s.sport }}</b> <span class="muted">· {{ s.match }}% match</span></li>{% endfor %}</ol>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if doc.coach and doc.coach.story %}
+    <div class="card coach">
+        <h2 style="font-size:1.05rem;margin:0 0 8px">🧠 Game master <span class="badge warn" style="background:#4c1d95;color:#ede9fe">{{ 'Muse Spark' if doc.coach.source == 'muse-spark' else 'offline coach' }}</span></h2>
+        <p style="margin:0 0 8px">{{ doc.coach.story }}</p>
+        {% if doc.coach.focus %}<p style="margin:0 0 8px">🎯 {{ doc.coach.focus }}</p>{% endif %}
+        {% if doc.coach.tip_for_parents %}<p class="muted" style="margin:0">👪 {{ doc.coach.tip_for_parents }}</p>{% endif %}
+    </div>
+    {% endif %}
+
+    {% set d = prof.details %}
+    <div class="card">
+        <h2 style="font-size:1.05rem;margin:0 0 10px">What was measured</h2>
+        <table>
+            {% if d.dodge %}<tr><th>Raider Dodge</th><td>{{ d.dodge.dodged }}/{{ d.dodge.trials }} dodged{% if d.dodge.median_reaction_ms %} · median reaction {{ d.dodge.median_reaction_ms }} ms{% endif %}{% if d.dodge.median_peak_speed_sw_s %} · peak side speed {{ d.dodge.median_peak_speed_sw_s }} shoulder-widths/s{% endif %}</td></tr>{% endif %}
+            {% if d.jump %}<tr><th>Log Jump</th><td>{{ d.jump.cleared }}/{{ d.jump.jumps }} cleared · best {{ d.jump.best_cm }} cm <span class="muted">({{ 'SAM 3.1 calibration' if d.calibration == 'sam-3.1' else 'body-landmark calibration' }})</span></td></tr>{% endif %}
+            {% if d.bowler and d.bowler.by_level %}<tr><th>Read the Bowler</th><td>{% for lv, x in d.bowler.by_level.items() %}{{ lv }} {{ x }}{{ ' · ' if not loop.last }}{% endfor %} <span class="muted">(screen goes dark before the ball is seen)</span></td></tr>{% endif %}
+            {% if d.combo and d.combo.errors_per_try %}<tr><th>Copy the Combo</th><td>errors per try {{ d.combo.errors_per_try|map('int')|join(' → ') }}{% if d.combo.reduction_pct is not none %} · errors fell {{ d.combo.reduction_pct }}%{% endif %}</td></tr>{% endif %}
+            {% if d.pulse and d.pulse.checks %}<tr><th>Pulse (camera)</th><td>{% for c in d.pulse.checks %}{{ (c.bpm ~ ' bpm') if c.bpm else 'not measured' }}{{ '' if c.ok else ' (low confidence)' }}{{ ' → ' if not loop.last }}{% endfor %}{% if d.pulse.recovery_bpm is defined %} · recovered {{ d.pulse.recovery_bpm }} bpm{% endif %}</td></tr>{% endif %}
+        </table>
+        <p class="muted" style="margin:10px 0 0;font-size:.85rem">{{ prof.starter_note }} No video or photo of the player is stored - only these numbers.</p>
+    </div>
+
+    <div class="card row" style="justify-content:space-between">
+        <div style="max-width:420px">
+            <h2 style="font-size:1.05rem;margin:0 0 6px">Share or verify</h2>
+            <p class="muted" style="margin:0 0 10px">Scan this code to open this page. Each time it opens, the server recalculates the scores from the sealed measurements and re-checks the HMAC-SHA256 signature.</p>
+            <a class="btn" href="/arena" >🎮 Play DeepFit Arena</a>
+            <button class="btn secondary no-print" onclick="window.print()" style="margin-left:8px">🖨️ Print</button>
+        </div>
+        <div style="text-align:center"><div class="qr" id="qr" aria-label="QR code for this page">{% if qr_svg %}{{ qr_svg|safe }}{% endif %}</div>
+            <div class="muted" style="font-size:.72rem;max-width:180px;word-break:break-all;margin-top:6px">{{ share_url }}</div></div>
+    </div>
+</main>
+{% if not qr_svg %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+    (function () {
+        const SHARE = {{ (share_url or '')|tojson }} || location.href;
+        const box = document.getElementById('qr');
+        try { new QRCode(box, { text: SHARE.split('?')[0] + '?scan=1', width: 140, height: 140 }); }
+        catch (e) { box.style.cssText = 'width:auto;height:auto;background:none'; box.textContent = SHARE; }
+    })();
+</script>
+{% endif %}
+</body>
+</html>

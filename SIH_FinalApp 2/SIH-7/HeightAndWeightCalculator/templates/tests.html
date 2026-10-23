@@ -84,6 +84,16 @@
     {% endif %}
 
 
+    <section class="coach-box" aria-labelledby="arena-title" style="border-color:#06b6d4;background:linear-gradient(135deg,#062a3a,#071730)">
+        <div class="big-icon" aria-hidden="true">🎮</div>
+        <div style="flex:1;min-width:240px">
+            <h2 id="arena-title" style="font-size:1.25rem;margin:0;color:#67e8f9">DeepFit Arena</h2>
+            <p style="margin:.35rem 0 0;color:#cbd5e1">A 3-minute camera game: dodge the raider, jump the logs, read the bowler, copy the combo.
+               Hidden inside it: reflexes, agility, power, game reading, learning speed and heart recovery.</p>
+        </div>
+        <a class="coach-btn" href="/arena" style="background:linear-gradient(135deg,#06b6d4,#8b5cf6)">▶ Play Arena</a>
+    </section>
+
     {% set coach = (cards | selectattr('key', 'equalto', 'coachability') | list | first) %}
     {% if coach %}
     <section class="coach-box" aria-labelledby="coach-title">

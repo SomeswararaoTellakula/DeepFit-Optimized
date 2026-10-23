@@ -236,6 +236,7 @@
                 el.status.textContent = m; say(m, true); caption(m); $('in-weight').focus(); return;
             }
         }
+        if (EX.key === 'dumbbell_curls') body.load_kg = Number($('in-load').value) || 0;
         const r = await fetch(`/ex/${EX.key}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (res.status !== 'success') {
@@ -320,6 +321,12 @@
             if (s.mirror != null) { $('meter-row').style.display = ''; $('mirror-label').textContent = s.mirror_label || ''; }
             mirrorSet(cd > 0 ? null : s.mirror);
         }
+        if (s.load && $('load-live')) {
+            const L = s.load, r = L.last;
+            $('load-live').innerHTML = L.load_kg ? `<span>${L.load_kg} kg</span><span>Clean reps ${L.clean_reps}</span>` +
+                (r ? `<span>Last: ${r.speed != null ? r.speed + ' m/s' : '–'}</span><span>Elbow ${r.top_angle}°</span>` +
+                     `<span class="${r.clean ? 'ok' : 'bad'}">${r.clean ? '✓ clean' : '✗ ' + (r.swing_pct > 15 ? 'body swing' : 'elbow drift')}</span>` : '') : '';
+        }
         if (EX.key === 'coachability') {
             renderCoach(s);
             el.value.textContent = Math.round(s.score);
@@ -392,6 +399,34 @@
             p.textContent = (c.reduction_pct ? `Errors fell ${c.reduction_pct}% from try 1. ` : '') + (c.note || '') + ' *Starter norm.';
             extra.appendChild(p);
         }
+        if (r.load_kg && r.load_analysis) {
+            const A = r.load_analysis, chk = r.load_check || {};
+            $('result-value').textContent = `${r.value} reps × ${r.load_kg} kg`;
+            if (b.available) $('result-target').textContent = b.target > 1
+                ? `Target with ${b.benchmark_load_kg} kg for your group (${b.age_band}): ≥ ${b.target} clean reps - you did ${A.clean_reps}`
+                : (b.note || '');
+            const seen = chk.seen === true ? '✓ dumbbell seen by SAM 3.1' : chk.seen === false ? '⚠ SAM 3.1 did not see a dumbbell in the hand' : 'not checked (' + (chk.reason || 'no Meta API key') + ')';
+            const rows = [
+                ['Clean reps (no swing, elbows pinned)', `${A.clean_reps} of ${A.reps}`],
+                ['Lifting speed, first reps → last reps', A.first_speed_m_s != null ? `${A.first_speed_m_s} → ${A.last_speed_m_s ?? '–'} m/s` + (A.velocity_loss_pct != null ? ` (slowed ${A.velocity_loss_pct}%)` : '') : '–'],
+                ['Elbow angle at the top', A.mean_top_angle_deg != null ? `${A.mean_top_angle_deg}° (expected ~${b.expected_top_angle_deg ?? '–'}° at this weight)` : '–'],
+                ['Body swing / elbow drift', `${A.mean_swing_pct ?? '–'}% / ${A.mean_drift_pct ?? '–'}% (limits ${b.max_swing_pct ?? 15}% / ${b.max_elbow_drift_pct ?? 25}%)`],
+                ['How heavy it was for you', A.intensity ? A.intensity : '–'],
+                ['Estimated one-rep max (each arm)', A.est_1rm_kg ? `≈ ${A.est_1rm_kg} kg` + (A.est_1rm_note ? ` - ${A.est_1rm_note}` : '') : 'needs a heavier dumbbell'],
+                ['Next time try', A.next_load_kg ? `${A.next_load_kg} kg` : '–'],
+                ['Weight check', seen],
+            ];
+            const t = document.createElement('table'); t.className = 'load-table';
+            t.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td><b>${v}</b></td></tr>`).join('');
+            extra.appendChild(t);
+            const sp = (r.reps_detail || []).map((x) => x.speed || 0), mx = Math.max(0.1, ...sp);
+            if (sp.length) {
+                const W = 300, H = 60, bw = W / sp.length;
+                extra.insertAdjacentHTML('beforeend', `<svg viewBox="0 0 ${W} ${H + 14}" style="width:100%;max-width:360px;margin-top:8px" role="img" aria-label="Lifting speed of each rep">` +
+                    sp.map((v, i) => `<rect x="${i * bw + 1}" y="${H - H * v / mx}" width="${bw - 2}" height="${H * v / mx}" fill="${(r.reps_detail[i] || {}).clean ? '#22c55e' : '#f87171'}"/>`).join('') +
+                    `<text x="0" y="${H + 12}" fill="#94a3b8" font-size="10">speed of each rep (green = clean)</text></svg>`);
+            }
+        }
         if (r.maturity) {
             const m = r.maturity;
             rating.textContent = m.status ? `${m.status} developer` : 'Measured';
@@ -419,6 +454,15 @@
         el.value.textContent = '0';
         el.start.disabled = !verified;
         say('Ready to retake. Press space to start.', true);
+    });
+
+    // ------------------------------------------------------------ dumbbell weight picker
+    document.querySelectorAll('.load-pick').forEach((b) => b.addEventListener('click', () => {
+        document.querySelectorAll('.load-pick').forEach((x) => x.classList.toggle('on', x === b));
+        $('in-load').value = b.dataset.kg;
+    }));
+    if ($('in-load')) $('in-load').addEventListener('input', () => {
+        document.querySelectorAll('.load-pick').forEach((x) => x.classList.toggle('on', Number(x.dataset.kg) === Number($('in-load').value)));
     });
 
     // ------------------------------------------------------------ wiring

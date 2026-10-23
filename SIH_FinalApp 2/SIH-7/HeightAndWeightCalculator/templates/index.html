@@ -21,11 +21,19 @@
                         Login <i class="fas fa-sign-in-alt ml-2"></i>
                     </a>
                 </div>
+                <a href="/arena" class="btn-glass btn-lg mt-3 d-inline-block"
+                    style="background: linear-gradient(45deg, #06b6d4, #8b5cf6); box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);">
+                    🎮 Play DeepFit Arena - no sign-up <i class="fas fa-gamepad ml-2"></i>
+                </a>
                 {% else %}
                 <div class="buttons d-flex flex-column gap-3 align-items-start mw-320">
                     <a href="/tests" class="btn-glass btn-lg w-100"
                         style="background: linear-gradient(45deg, #06b6d4, #2563eb); box-shadow: 0 8px 20px rgba(6, 182, 212, 0.4);">
                         🏅 All Fitness Tests (15) <i class="fas fa-list-check ml-2"></i>
+                    </a>
+                    <a href="/arena" class="btn-glass btn-lg w-100"
+                        style="background: linear-gradient(45deg, #06b6d4, #8b5cf6); box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);">
+                        🎮 DeepFit Arena - the game is the trial <i class="fas fa-gamepad ml-2"></i>
                     </a>
                     <a href="{{ url_for('height') }}" class="btn-glass btn-lg w-100">
                         Height & Weight <i class="fas fa-ruler ml-2"></i>

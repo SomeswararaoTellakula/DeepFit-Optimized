@@ -96,6 +96,8 @@ def build(doc: Dict, replay: Optional[Dict], identity: Dict) -> Dict:
         "identity": identity,
         "replay_hash": replay_hash(replay),
     }
+    if doc.get("load_kg") is not None:            # weighted tests: the declared dumbbell weight is signed too
+        payload["load_kg"] = doc["load_kg"]
     sig = sign(payload)
     return {"v": VERSION, "payload": payload, "sig": sig, "token": sig[:16],
             "athlete_token": athlete_token(doc["athlete_ref"])}
@@ -114,6 +116,9 @@ def verify(doc: Dict, replay: Optional[Dict]) -> Tuple[bool, List[str]]:
                            ("athlete_ref", doc.get("athlete_ref")), ("result_id", str(doc.get("_id")))]:
         if payload.get(field) != current:
             problems.append(f"'{field}' was changed after signing.")
+    if "load_kg" in payload or doc.get("load_kg") is not None:
+        if payload.get("load_kg") != doc.get("load_kg"):
+            problems.append("'load_kg' (the dumbbell weight) was changed after signing.")
     if payload.get("replay_hash") != replay_hash(replay):
         problems.append("The movement replay does not match the signed result.")
     if not hmac.compare_digest(sign(payload), pp.get("sig", "")):

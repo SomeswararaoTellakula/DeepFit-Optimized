@@ -31,6 +31,14 @@
         .mode-bar button[aria-pressed="true"] { background: #06b6d4; color: #001018; border-color: #06b6d4; }
         .mode-note { font-size: .9rem; color: #94a3b8; margin: -0.5rem 0 1rem; }
 
+        .load-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+        .load-pick { min-height: 40px; padding: 0 12px; border-radius: 999px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-weight: 700; cursor: pointer; }
+        .load-pick.on { background: #f59e0b; color: #111827; border-color: #f59e0b; }
+        .load-live { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .load-live span { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 4px 10px; font-weight: 700; }
+        .load-live .ok { color: #4ade80; } .load-live .bad { color: #f87171; }
+        .load-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .9rem; }
+        .load-table td { padding: 4px 6px; border-bottom: 1px solid #1e293b; } .load-table td:first-child { color: #94a3b8; }
         /* Big value + benchmark */
         .big-value { font-size: 3rem; font-weight: 800; line-height: 1; color: #22d3ee; }
         .big-unit { font-size: 1rem; color: #94a3b8; margin-left: .3rem; }
@@ -154,6 +162,22 @@
                     <div class="tip" id="coach-tip" role="status"></div>
                 </section>
                 {% endif %}
+                {% if ex.key == 'dumbbell_curls' %}
+                <section aria-label="Dumbbell weight" style="margin-top:1rem" class="load-box">
+                    <h3 style="margin:0;font-size:1rem">🏋️ Dumbbell weight (each hand)</h3>
+                    <div class="load-picks" role="group" aria-label="Pick the dumbbell weight">
+                        {% for kg in [0, 1, 2, 3, 5, 7.5, 10] %}
+                        <button type="button" class="load-pick{{ ' on' if kg == 0 }}" data-kg="{{ kg }}">{{ 'No weight / bottle' if kg == 0 else ('%g kg' % kg) }}</button>
+                        {% endfor %}
+                        <label for="in-load" style="display:inline-flex;align-items:center;gap:6px">Other
+                            <input id="in-load" type="number" min="0" max="60" step="0.5" value="0" style="width:80px"> kg</label>
+                    </div>
+                    <p style="margin:.4rem 0 0;color:#94a3b8;font-size:.85rem">The camera can't read the number on a dumbbell, so pick it here.
+                        It then measures how the weight moved - elbow angle, lifting speed, body swing - and estimates your strength (1-rep max).
+                        With the Meta API key, SAM 3.1 also checks that a dumbbell is really in your hand.</p>
+                    <div id="load-live" class="load-live" aria-live="off"></div>
+                </section>
+                {% endif %}
                 {% if ex.key == 'growth_measures' %}
                 <section aria-label="Your measurements" style="margin-top:1rem">
                     <h3 style="margin:0;font-size:1rem">Measured with a tape and a scale</h3>
@@ -257,6 +281,6 @@
         };
     </script>
     {% include 'partials/verify_view.html' %}
-    <script src="{{ url_for('static', filename='js/exercise_page.js', v='2') }}"></script>
+    <script src="{{ url_for('static', filename='js/exercise_page.js', v='3') }}"></script>
 </body>
 </html>

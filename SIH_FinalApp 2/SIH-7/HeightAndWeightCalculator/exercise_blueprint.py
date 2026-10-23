@@ -17,6 +17,7 @@ Works for normal accounts (session['user_id']) and for blind athletes registered
 through the blind flow (session['blind_user_id']).
 """
 
+import math
 import threading
 import time
 from datetime import datetime
@@ -104,6 +105,40 @@ def _height_for(ath: Dict) -> float:
             except Exception:
                 pass
     return 165.0
+
+
+def _weight_for(ath: Dict) -> Optional[float]:
+    """Body weight (kg) from the athlete's latest height & weight measurement, if there is one."""
+    db = get_db()
+    if db is None or not ath or not ath.get("email"):
+        return None
+    for coll in ("Final_Estimated_Height_and_Weight", "Height and Weight"):
+        try:
+            d = db[coll].find_one({"user_email": ath["email"]}, sort=[("timestamp", -1)])
+            v = d and (d.get("final_weight_kg") or d.get("weight_kg"))
+            if v and 15 <= float(v) <= 200:
+                return float(v)
+        except Exception:
+            pass
+    return None
+
+
+def _check_dumbbell(ex, frame, pose_landmarks):
+    """Background job: ask SAM 3.1 whether a dumbbell is really in the athlete's hand."""
+    try:
+        import base64
+        import curl_load
+        h, w = frame.shape[:2]
+        lm = pose_landmarks.landmark
+        wrists = [(lm[i].x * w, lm[i].y * h) for i in (EE.L_WRIST, EE.R_WRIST) if getattr(lm[i], "visibility", 1) >= 0.5]
+        fore = [math.hypot((lm[a].x - lm[b].x) * w, (lm[a].y - lm[b].y) * h) for a, b in ((13, 15), (14, 16))]
+        forearm = max(fore) if fore else 0.1 * h
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        url = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode()
+        cm_per_px = (EE.FOREARM_RATIO * ex.height_cm) / forearm if forearm else None
+        ex.load_check = curl_load.dumbbell_check(url, w, h, wrists, forearm, cm_per_px)
+    except Exception as e:
+        ex.load_check = {"method": "sam-3.1", "seen": None, "reason": f"check failed: {e}"}
 
 
 def _mode() -> str:
@@ -220,7 +255,7 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
         ex.manual_value = float(manual_value)
     res = ex.result()
     population = ACTIVE.mode if ACTIVE.mode in benchmarks.POPULATIONS else "standard"
-    bench = benchmarks.evaluate(ex.key, res["value"], ath.get("age"), ath.get("gender"), population)
+    bench = load_benchmark(ex, res, ath, population) or benchmarks.evaluate(ex.key, res["value"], ath.get("age"), ath.get("gender"), population)
     doc = {
         "athlete_ref": ath["ref"],
         "athlete_name": ath.get("name"),
@@ -280,6 +315,14 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
     ACTIVE.result = out
     log_info(f"Test finished: {ex.key} = {res['value']} {res['unit']} ({bench.get('rating')}) mode={ACTIVE.mode}")
     return out
+
+
+def load_benchmark(ex, res: Dict, ath: Dict, population: str) -> Optional[Dict]:
+    """Weighted curls are compared with the target for the weight that was lifted (curl_load_benchmarks.csv)."""
+    if not isinstance(ex, EE.DumbbellCurls) or not res.get("load_kg"):
+        return None
+    import curl_load
+    return curl_load.evaluate(res["load_analysis"], ath.get("age"), ath.get("gender"), population, ex.body_weight_kg)
 
 
 def _finish(token: Optional[int] = None):
@@ -385,6 +428,14 @@ def start(key):
         ACTIVE.token += 1
         ACTIVE.key, ACTIVE.athlete, ACTIVE.mode = key, ath, mode
         ACTIVE.ex = cls(height_cm=_height_for(ath))
+        if key == "dumbbell_curls":
+            try:
+                load = float(data.get("load_kg") or 0)
+            except (TypeError, ValueError):
+                load = 0
+            if load and not 0.5 <= load <= 60:
+                return jsonify({"status": "error", "message": "Dumbbell weight must be between 0.5 and 60 kg."}), 400
+            ACTIVE.ex.configure(load_kg=load or None, body_weight_kg=_weight_for(ath))
         if key == "growth_measures":
             def num(name, lo, hi):
                 try:
@@ -455,6 +506,10 @@ def _frames():
             else:
                 pose = EE.Pose.from_mediapipe(res, frame.shape[1], frame.shape[0]) if res is not None else None
                 ex.update(pose, now)
+                if (isinstance(ex, EE.DumbbellCurls) and ex.load_kg and ex.load_check is None and pose is not None
+                        and pose.vis(EE.L_WRIST, EE.R_WRIST, EE.L_ELBOW, EE.R_ELBOW)):
+                    ex.load_check = {"method": "sam-3.1", "seen": None, "reason": "checking"}
+                    threading.Thread(target=_check_dumbbell, args=(ex, frame.copy(), res), daemon=True).start()
                 ACTIVE.replay.add(now - ACTIVE.started - COUNTDOWN, ex.value(), res)
             _draw(frame, ex, res)
             ACTIVE.monitor.draw(frame)
@@ -696,6 +751,7 @@ def _result_view(rid: str, tok: str):
         "card_url": f"/passport/r/{rid}/{tok}/card",
         "athlete_url": f"/passport/a/{doc['passport']['athlete_token']}",
         "coach": doc.get("coachability"), "maturity": doc.get("maturity"),
+        "load": doc.get("load_analysis") if doc.get("load_kg") else None, "load_check": doc.get("load_check") or {},
         "checked_at": _checked_at(), "card_id": tok,
         "figure": _skeleton_figure(replay, size.get("w") or 640, size.get("h") or 480),
     }
@@ -706,7 +762,7 @@ def passport_result(rid, tok):
     v = _result_view(rid, tok)
     return render_template("passport.html", **{k: v[k] for k in (
         "p", "valid", "problems", "rating", "target", "share_url", "card_url", "athlete_url", "coach", "maturity",
-        "checked_at")},
+        "checked_at", "load", "load_check")},
         scanned=request.args.get("scan") == "1",
         has_replay=bool(v["replay"] and v["replay"].get("frames")),
         replay_url=f"/api/passport/replay/{rid}/{tok}")
@@ -719,7 +775,7 @@ def passport_result_card(rid, tok):
     qr_target = v["share_url"] + "?scan=1"
     return render_template("passport_card.html", kind="result", qr_target=qr_target, qr_svg=_qr_svg_inline(qr_target),
                            **{k: v[k] for k in ("p", "valid", "problems", "rating", "bench", "coach", "maturity",
-                                                "checked_at", "card_id", "figure", "share_url")},
+                                                "checked_at", "card_id", "figure", "share_url", "load", "load_check")},
                            back_url=f"/passport/r/{rid}/{tok}")
 
 

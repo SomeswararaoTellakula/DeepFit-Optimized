@@ -22,6 +22,7 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
   final _height = TextEditingController();
   final _weight = TextEditingController();
   final _chair = TextEditingController(text: '45');
+  double _loadKg = 0;                       // dumbbell curls: weight in each hand (0 = no weight / bottle)
   bool _spoke = false;
 
   @override
@@ -66,7 +67,8 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
         }
         growth = {'height_cm': h, 'weight_kg': w, 'chair_cm': c};
       }
-      screen = TestRunScreen(info: t, mode: state.mode, front: state.frontCamera, growthInputs: growth);
+      screen = TestRunScreen(info: t, mode: state.mode, front: state.frontCamera, growthInputs: growth,
+          loadKg: t.key == 'dumbbell_curls' && _loadKg > 0 ? _loadKg : null);
     }
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => screen));
   }
@@ -143,6 +145,26 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
                       TextField(controller: _weight, keyboardType: TextInputType.number, decoration: deco('Weight', suffix: 'kg')),
                       const SizedBox(height: 10),
                       TextField(controller: _chair, keyboardType: TextInputType.number, decoration: deco('Chair seat height', suffix: 'cm')),
+                    ]),
+                  ),
+                ],
+                if (t.key == 'dumbbell_curls') ...[
+                  const SectionTitle('Dumbbell weight (each hand)'),
+                  Panel(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Wrap(spacing: 8, runSpacing: 6, children: [
+                        for (final kg in const [0.0, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0])
+                          ChoiceChip(
+                            label: Text(kg == 0 ? 'No weight / bottle' : '${fmtValue(kg)} kg'),
+                            selected: _loadKg == kg,
+                            onSelected: (_) => setState(() => _loadKg = kg),
+                          ),
+                      ]),
+                      const SizedBox(height: 8),
+                      const Text(
+                          'The camera can\'t read the number on a dumbbell, so pick it here. The server then measures how the '
+                          'weight moved - elbow angle, lifting speed, body swing - and estimates your strength (1-rep max).',
+                          style: TextStyle(color: DeepFitColors.muted, fontSize: 13)),
                     ]),
                   ),
                 ],

@@ -217,6 +217,9 @@ app.register_blueprint(exercise_bp)
 # JSON API for the DeepFit phone app (deepfit_mobile/) - adds /api/v1/..., changes nothing else
 from mobile_api import mobile_bp
 app.register_blueprint(mobile_bp)
+# DeepFit Arena - the camera game that is also the talent trial (/arena, open to everyone)
+from arena_blueprint import arena_bp
+app.register_blueprint(arena_bp)
 
 # Global error and request handlers
 @app.errorhandler(404)

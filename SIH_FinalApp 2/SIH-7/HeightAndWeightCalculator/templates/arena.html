@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="{{ cfg.lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#1e1b4b">
+    <title>DeepFit Arena - the game is the trial</title>
+    <link rel="preload" href="/static/arena/fonts/Bungee-Regular.woff" as="font" type="font/woff" crossorigin>
+    <link rel="stylesheet" href="/static/arena/arena.css?v=2">
+</head>
+<body class="mode-standard on-title">
+<script type="application/json" id="arena-cfg">{{ cfg|tojson }}</script>
+
+<!-- the game: themed world + the player (camera cut-out or cartoon avatar) + everything else -->
+<canvas id="stage" aria-hidden="true"></canvas>
+<video id="cam" playsinline muted></video>
+
+<!-- in-game HUD -->
+<header id="hud" hidden>
+    <div class="hud-left">
+        <div id="hud-level" class="hud-level">Arena</div>
+        <div id="hud-trial" class="hud-trial"></div>
+    </div>
+    <div class="hud-center" aria-live="off">
+        <div id="score" class="score"><span id="score-num">0</span><small>PTS</small></div>
+        <div id="combo" class="combo" hidden>×<span id="combo-num">1.5</span> COMBO</div>
+    </div>
+    <div class="hud-right">
+        <span id="hud-ai" class="chip" title="Meta models used in this session"></span>
+        <button id="mic-btn" class="icon-btn" aria-label="Hold to give a voice command">🎤</button>
+        <button id="mute-btn" class="icon-btn" aria-label="Sound on or off">🔊</button>
+        <button id="quit-btn" class="icon-btn" aria-label="End the game">✕</button>
+    </div>
+</header>
+
+<div id="caption" role="status" aria-live="assertive"></div>
+<div id="flash"></div>
+
+<!-- title screen -->
+<section id="title" class="title">
+    <div class="logo" aria-label="DeepFit Arena">
+        <span class="logo-top">DEEPFIT</span>
+        <span class="logo-main">ARENA</span>
+    </div>
+    <p class="tagline">Dodge the raider · Jump the logs · Outrun the bull · Read the bowler · Win the dance-off</p>
+
+    <div class="langs" role="group" aria-label="Language">
+        <button class="lang-btn" data-lang="en">English</button>
+        <button class="lang-btn" data-lang="hi">हिन्दी</button>
+        <button class="lang-btn" data-lang="te">తెలుగు</button>
+    </div>
+
+    <button id="start-btn" class="play-btn">▶ PLAY</button>
+
+    <div class="title-row">
+        <button id="settings-btn" class="pill-btn" aria-expanded="false">⚙ Settings</button>
+        <a class="pill-btn" href="{{ '/arena' if cfg.sim else '/arena?sim=1' }}">{{ '📷 Play with my camera' if cfg.sim else '🤖 Watch a demo player' }}</a>
+        <a class="pill-btn" href="/">🏠 DeepFit</a>
+    </div>
+
+    <div id="settings" class="settings" hidden>
+        <label>Name <input id="pname" maxlength="40" value="{{ cfg.name.split(' ')[0] if cfg.name }}" placeholder="Your first name" autocomplete="given-name"></label>
+        <label>Height (cm) <input id="pheight" type="number" min="100" max="230" value="{{ cfg.heightCm|round|int }}"></label>
+        <label>Age <input id="page" type="number" min="5" max="99" value="{{ cfg.age or '' }}"></label>
+        <label>Language
+            <select id="lang">{% for code, name in langs.items() %}<option value="{{ code }}" {{ 'selected' if code == cfg.lang }}>{{ {'en': 'English', 'hi': 'हिन्दी', 'te': 'తెలుగు'}[code] }}</option>{% endfor %}</select>
+        </label>
+        <label>Mode
+            <select id="mode">
+                <option value="standard">Standard</option>
+                <option value="blind">Blind / low vision - sound guided</option>
+                <option value="deaf">Deaf / hard of hearing - visual cues</option>
+            </select>
+        </label>
+        <label>Game length
+            <select id="length"><option value="quick">Quick - 3 minutes</option><option value="full">Full - 6 minutes</option></select>
+        </label>
+        <label>Show me as
+            <select id="view"><option value="camera">Me (camera cut-out)</option><option value="avatar">Cartoon avatar</option></select>
+        </label>
+        <label>Music
+            <select id="music"><option value="on">On</option><option value="off">Off</option></select>
+        </label>
+    </div>
+
+    <div class="board-mini" id="board-mini" aria-label="Today's champions">
+        <div class="board-head">🏆 Today's champions</div>
+        <ol id="board-today"><li class="muted">Loading…</li></ol>
+    </div>
+
+    <p class="setup-tip">📱 Phone or laptop at waist height, 2–3 m away, room to step left and right. Your video never leaves this device.</p>
+    <p id="ai-status" class="muted small"></p>
+    {% if cfg.sim %}<p class="small warn-text">DEMO MODE - a computer player plays. Results are marked "simulated".</p>{% endif %}
+    <p id="start-error" class="error" role="alert"></p>
+</section>
+
+<!-- level intro -->
+<section id="intro" class="intro" hidden aria-live="polite">
+    <div class="intro-card">
+        <div id="intro-num" class="intro-num">LEVEL 1</div>
+        <div id="intro-icon" class="intro-icon">🤼</div>
+        <h2 id="intro-title" class="intro-title">RAIDER DODGE</h2>
+        <p id="intro-goal" class="intro-goal"></p>
+        <p id="intro-measure" class="intro-measure"></p>
+    </div>
+    <div id="count" class="count" aria-hidden="true"></div>
+</section>
+
+<!-- level clear -->
+<section id="clear" class="clear" hidden aria-live="polite">
+    <div class="clear-title" id="clear-title">LEVEL CLEAR!</div>
+    <div class="stars" id="clear-stars"><span>★</span><span>★</span><span>★</span></div>
+    <div class="clear-pts" id="clear-pts">+0</div>
+    <div class="clear-stat" id="clear-stat"></div>
+</section>
+
+<!-- results -->
+<section id="results" class="panel wide" hidden aria-labelledby="res-title">
+    <div class="victory">
+        <div id="rank-icon" class="rank-icon">🏆</div>
+        <div>
+            <div class="brand">DEEPFIT ARENA · GAME OVER</div>
+            <h1 id="res-title"><span id="rank-name">Champion</span></h1>
+            <div class="victory-stats">
+                <span class="vs"><b id="total-pts">0</b> points</span>
+                <span class="vs">★ <b id="total-stars">0</b></span>
+                <span class="vs" id="board-pos" hidden></span>
+                <span class="vs best" id="best" hidden>NEW PERSONAL BEST!</span>
+            </div>
+        </div>
+    </div>
+
+    <h2 class="sec">Your hidden talent profile</h2>
+    <div class="res-grid">
+        <div>
+            <svg id="radar" viewBox="0 0 320 300" role="img" aria-label="Talent profile chart"></svg>
+            <div id="overall" class="overall"></div>
+        </div>
+        <div>
+            <ul id="trait-list" class="traits"></ul>
+            <h3>Sports to try</h3>
+            <ol id="sports" class="sports"></ol>
+            <p id="pulse-line" class="muted small"></p>
+        </div>
+    </div>
+    <div id="coach" class="coach">
+        <div class="coach-head">🧠 <b>Game master</b> <span id="coach-src" class="chip"></span></div>
+        <p id="coach-story" class="muted">Analysing your game…</p>
+        <p id="coach-focus"></p>
+        <p id="coach-parents" class="muted small"></p>
+        <p id="coach-next" class="small"></p>
+    </div>
+    <div id="poster-box" hidden><img id="poster" alt="Your personal sports poster, made by Muse Image"></div>
+    <div class="actions">
+        <button id="save-btn" class="big-btn">🪪 Save &amp; get my verified card</button>
+        <button id="again-btn" class="big-btn alt">↻ Play again - next level</button>
+        <button id="poster-btn" class="btn2">🎨 Make my poster</button>
+        <a href="/arena{{ '?sim=1' if cfg.sim }}" class="btn2">🏠 Title screen</a>
+    </div>
+    <div id="share" hidden>
+        <div id="qr" class="qr"></div>
+        <div>
+            <p><b>Verified card ready.</b> Scan or open:</p>
+            <p><a id="share-link" target="_blank" rel="noopener"></a></p>
+        </div>
+    </div>
+    <div class="board">
+        <h3>🏆 Leaderboard</h3>
+        <div class="board-cols">
+            <div><div class="muted small">TODAY</div><ol id="board-today-full"></ol></div>
+            <div><div class="muted small">ALL TIME</div><ol id="board-all"></ol></div>
+        </div>
+    </div>
+    <p class="muted small">Talent scores use starter scales, to be tuned with field data. Heart values are camera estimates, not a medical reading.</p>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module" src="/static/arena/arena.js?v=2"></script>
+</body>
+</html>

@@ -108,6 +108,11 @@
         <p style="margin:12px 0 0;color:#334155"><b>Coachability:</b> errors per try {{ coach.errors_per_try|join(' → ') }} ·
             errors fell {{ coach.reduction_pct or 0 }}% · {{ coach.percentile }}th percentile (starter norm)</p>
         {% endif %}
+        {% if load %}
+        <p style="margin:12px 0 0;color:#334155"><b>Weighted curl:</b> {{ '%g' % p.load_kg }} kg dumbbell · {{ load.clean_reps }} clean reps ·
+            est. 1-rep max {{ ('≈ %g kg' % load.est_1rm_kg) if load.est_1rm_kg else '–' }} each arm ·
+            weight {{ 'seen by SAM 3.1' if load_check.seen == true else 'declared' }}</p>
+        {% endif %}
         {% if maturity %}
         <p style="margin:12px 0 0;color:#334155"><b>Growth:</b> sitting height {{ maturity.sitting_height_cm }} cm ·
             {{ maturity.status }} developer ({{ maturity.maturity_offset }} yrs from growth spurt)</p>

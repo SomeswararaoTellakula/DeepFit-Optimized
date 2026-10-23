@@ -45,6 +45,8 @@ import zlib
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+import cv2
+import numpy as np
 from flask import Blueprint, current_app, jsonify, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -475,10 +477,12 @@ def _valid_pattern(pattern) -> bool:
 
 
 def rerun(key: str, frames: List, width: int, height: int, height_cm: float, ath: Dict,
-          inputs: Optional[Dict] = None, pattern=None, code=None, manual_value=None):
+          inputs: Optional[Dict] = None, pattern=None, code=None, manual_value=None, load_kg=None):
     """Feed the phone's skeleton track through the Python engine. Returns (exercise, replay, last_t)."""
     cls = EE.EXERCISES[key]
     ex = cls(height_cm=height_cm)
+    if key == "dumbbell_curls":
+        ex.configure(load_kg=load_kg, body_weight_kg=XB._weight_for(ath))
     if key == "growth_measures":
         ex.configure(height_cm=inputs["height_cm"], weight_kg=inputs["weight_kg"], chair_cm=inputs["chair_cm"],
                      age=ath.get("age"), sex=ath.get("gender"))
@@ -499,6 +503,36 @@ def rerun(key: str, frames: List, width: int, height: int, height_cm: float, ath
     if cls.camera == "none":
         ex.manual_value = manual_value
     return ex, replay, last_t
+
+
+def _phone_dumbbell_check(ex, snaps: List, frames: List, width: int, height: int) -> Dict:
+    """SAM 3.1 on one of the phone's camera snapshots: is a dumbbell really in the hand?"""
+    import base64
+    import curl_load
+    try:
+        snaps = sorted([s for s in snaps if isinstance(s, dict) and s.get("jpg") and (_num(s.get("t"), 0, 3600) is not None)],
+                       key=lambda s: float(s["t"]))
+        for snap in snaps[:3]:
+            t = float(snap["t"])
+            lm = min(((ft, f) for ft, f in frames if f is not None), key=lambda x: abs(x[0] - t), default=(None, None))[1]
+            if lm is None:
+                continue
+            url = str(snap["jpg"])
+            url = url if url.startswith("data:image") else "data:image/jpeg;base64," + url
+            img = cv2.imdecode(np.frombuffer(base64.b64decode(url.split(",", 1)[1]), np.uint8), cv2.IMREAD_COLOR)
+            if img is None:
+                continue
+            h, w = img.shape[:2]
+            wrists = [(lm[i][0] * w, lm[i][1] * h) for i in (15, 16) if lm[i][2] >= 0.5]
+            fore = max(math.hypot((lm[a][0] - lm[b][0]) * w, (lm[a][1] - lm[b][1]) * h) for a, b in ((13, 15), (14, 16)))
+            if not wrists or fore <= 0:
+                continue
+            out = curl_load.dumbbell_check(url, w, h, wrists, fore, (EE.FOREARM_RATIO * ex.height_cm) / fore)
+            out["snapshot_t"] = round(t, 1)
+            return out
+        return {"method": "none", "seen": None, "reason": "no usable camera snapshot"}
+    except Exception as e:
+        return {"method": "sam-3.1", "seen": None, "reason": f"check failed: {e}"}
 
 
 @mobile_bp.route("/results", methods=["POST"])
@@ -554,11 +588,15 @@ def upload_result(ath):
         log_info(f"Mobile result rejected ({key}, {ath['ref']}): {ident['message']}")
         return _ok(status="rejected", message=ident["message"], identity=ident)
 
-    ex, replay, last_t = rerun(key, frames, width, height, h_cm, ath, inputs, pattern, d.get("pattern_code"), manual)
+    load_kg = _num(d.get("load_kg"), 0.5, 60) if key == "dumbbell_curls" else None
+    ex, replay, last_t = rerun(key, frames, width, height, h_cm, ath, inputs, pattern, d.get("pattern_code"), manual, load_kg)
+    if load_kg:
+        ex.load_check = _phone_dumbbell_check(ex, d.get("snapshots") or [], frames, width, height)
     res = ex.result()
     client_value = _num((d.get("client_result") or {}).get("value"), -1e6, 1e6)
     same = client_value is None or abs(client_value - float(res["value"])) <= max(VALUE_TOLERANCE, 0.01 * abs(res["value"]))
-    bench = benchmarks.evaluate(key, res["value"], ath.get("age"), ath.get("gender"), _population(mode))
+    bench = (XB.load_benchmark(ex, res, ath, _population(mode))
+             or benchmarks.evaluate(key, res["value"], ath.get("age"), ath.get("gender"), _population(mode)))
     now = datetime.utcnow()
     doc = {
         "athlete_ref": ath["ref"], "athlete_name": ath.get("name"), "athlete_age": ath.get("age"),
