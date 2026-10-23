@@ -17,6 +17,7 @@
 
 import * as ART from './art.js?v=2';
 import { sfx, tone, audio, playMusic, stopMusic, setMuted, duck, beatPulse, SOUND } from './sound.js?v=2';
+import { LandmarkFilter, classifyMove, MoveTracker } from './motion.js?v=1';
 
 const CFG = JSON.parse(document.getElementById('arena-cfg').textContent);
 const Q = new URLSearchParams(location.search);
@@ -30,7 +31,10 @@ const CANVAS_FONT = '"Bungee", "Baloo Tammudu 2", "Baloo 2", system-ui, sans-ser
 
 const MP_VERSION = '0.10.14';
 const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
-const MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+// Pose model: "full" is clearly more accurate than "lite" and still real-time on ordinary laptops and phones.
+// If this device is too slow for it (> ~55 ms a frame), the game switches to "lite" by itself. ?model=lite|full|heavy forces one.
+const MP_MODEL_URL = (m) => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${m}/float16/1/pose_landmarker_${m}.task`;
+let MP_MODEL_NAME = ['lite', 'full', 'heavy'].includes(Q.get('model')) ? Q.get('model') : 'full';
 
 // ------------------------------------------------------------------ text in three languages
 const I18N = {
@@ -40,6 +44,8 @@ const I18N = {
     calib_upper: 'Keep your head, shoulders and arms in the frame, then stay still.',
     upper_mode: 'UPPER-BODY GAME! Your legs are not in view, so we play the upper-body levels.',
     feet_hint: 'Step back - this level needs your feet in the picture.',
+    hands_in_view: 'Move back a little, so your raised hands stay in the picture.',
+    sees: 'I see',
     step_back_upper: 'Now sit back so your head, shoulders and arms are in the frame.',
     boxing_intro: 'Shadow Boxing! Punch the pads as fast as you can - left or right.',
     pow: 'POW!',
@@ -74,6 +80,8 @@ const I18N = {
     calib_upper: 'सिर, कंधे और हाथ फ्रेम में रखिए, फिर स्थिर रहिए।',
     upper_mode: 'ऊपरी शरीर का खेल! आपके पैर नहीं दिख रहे, इसलिए हम ऊपरी शरीर वाले लेवल खेलेंगे।',
     feet_hint: 'पीछे हटिए - इस लेवल में पैर दिखने चाहिए।',
+    hands_in_view: 'थोड़ा पीछे हटिए, ताकि ऊपर उठे हाथ तस्वीर में रहें।',
+    sees: 'दिख रहा है',
     step_back_upper: 'अब पीछे बैठिए ताकि सिर, कंधे और हाथ फ्रेम में दिखें।',
     boxing_intro: 'शैडो बॉक्सिंग! जितनी तेज़ी से हो सके पैड पर मुक्का मारो - बाएँ या दाएँ।',
     pow: 'धमाक!',
@@ -108,6 +116,8 @@ const I18N = {
     calib_upper: 'తల, భుజాలు, చేతులు ఫ్రేమ్‌లో ఉంచి కదలకుండా ఉండండి.',
     upper_mode: 'పై శరీర ఆట! మీ కాళ్లు కనిపించడం లేదు, కాబట్టి పై శరీర లెవెల్స్ ఆడుదాం.',
     feet_hint: 'వెనక్కి వెళ్లండి - ఈ లెవెల్‌కు మీ పాదాలు కనిపించాలి.',
+    hands_in_view: 'కొంచెం వెనక్కి వెళ్లండి, పైకెత్తిన చేతులు చిత్రంలో ఉండాలి.',
+    sees: 'కనిపిస్తోంది',
     step_back_upper: 'ఇప్పుడు తల, భుజాలు, చేతులు ఫ్రేమ్‌లో కనిపించేలా వెనక్కి కూర్చోండి.',
     boxing_intro: 'షాడో బాక్సింగ్! ప్యాడ్‌లను వీలైనంత వేగంగా గుద్దండి - ఎడమ లేదా కుడి.',
     pow: 'ఢాం!',
@@ -157,7 +167,7 @@ const FULL_BODY_LEVELS = ['dodge', 'jump', 'escape'];
 // ------------------------------------------------------------------ state
 const S = {
   lang: CFG.lang || 'en', mode: 'standard', quick: true, sim: !!CFG.sim, view: 'camera',
-  src: null, vw: 640, vh: 480, lm: null, body: null, base: null,
+  src: null, vw: 640, vh: 480, lm: null, body: null, base: null, lmRaw: null, bodyRaw: null,
   calib: { method: 'pose', cm_per_px: null, body_px: null },
   level: null, running: false, started: false, lastSay: '', quit: false,
   scope: null,                                   // 'full' | 'upper' - decided by what the camera sees at the start
@@ -225,44 +235,7 @@ function bodyInfo(lm) {
     face: [0, 2, 5].every((i) => lm[i].v >= 0.5), eyeDist: Math.hypot(le.x - re.x, le.y - re.y),
   };
 }
-// Coachability move recognition (same rules as coachability.py, front view, athlete's own left/right)
-function angle(a, b, c) {
-  const v1x = a.x - b.x, v1y = a.y - b.y, v2x = c.x - b.x, v2y = c.y - b.y;
-  const n = Math.hypot(v1x, v1y) * Math.hypot(v2x, v2y);
-  return n === 0 ? 180 : Math.acos(clamp((v1x * v2x + v1y * v2y) / n, -1, 1)) * 180 / Math.PI;
-}
-function classify(lm) {
-  const P = (i) => ({ x: lm[i].x * S.vw, y: lm[i].y * S.vh });
-  const vis = (...ids) => ids.every((i) => lm[i].v >= 0.5);
-  if (!vis(0, 11, 12, 15, 16)) return 'unknown';
-  const hipsOk = vis(23, 24);
-  if (!hipsOk && S.scope !== 'upper') return 'unknown';
-  const sh = { x: (P(11).x + P(12).x) / 2, y: (P(11).y + P(12).y) / 2 };
-  // upper-body game: hips may be hidden (sitting at a desk) - the torso is ~1.5 shoulder widths long
-  const hp = hipsOk ? { x: (P(23).x + P(24).x) / 2, y: (P(23).y + P(24).y) / 2 }
-                    : { x: sh.x, y: sh.y + 1.5 * Math.hypot(P(11).x - P(12).x, P(11).y - P(12).y) };
-  const torso = Math.max(Math.hypot(hp.x - sh.x, hp.y - sh.y), 1), nose = P(0), lw = P(15), rw = P(16);
-  const near = (a, b, k) => Math.hypot(a.x - b.x, a.y - b.y) < k * torso;
-  if (vis(25, 26, 27, 28)) {
-    const knee = (angle(P(23), P(25), P(27)) + angle(P(24), P(26), P(28))) / 2;
-    if (knee < 125) return 'squat';
-  }
-  const upL = lw.y < nose.y - 0.45 * torso, upR = rw.y < nose.y - 0.45 * torso;
-  if (upL && upR) return 'hands_up';
-  const head = { x: nose.x, y: nose.y - 0.35 * torso };
-  if (near(lw, head, 0.5) && near(rw, head, 0.5)) return 'hands_on_head';
-  const lowL = lw.y > sh.y + 0.2 * torso, lowR = rw.y > sh.y + 0.2 * torso;
-  if (upL && lowR) return 'left_hand_up';
-  if (upR && lowL) return 'right_hand_up';
-  const lsh = P(11), rsh = P(12);
-  if (Math.abs(lw.y - lsh.y) < 0.3 * torso && Math.abs(rw.y - rsh.y) < 0.3 * torso &&
-      Math.abs(lw.x - lsh.x) > 0.7 * torso && Math.abs(rw.x - rsh.x) > 0.7 * torso) return 'arms_out';
-  let bl = 180, br = 180;
-  if (vis(13, 14)) { bl = angle(lsh, P(13), lw); br = angle(rsh, P(14), rw); }
-  if (hipsOk && near(lw, P(23), 0.4) && near(rw, P(24), 0.4) && bl < 130 && br < 130) return 'hands_on_hips';
-  if (lowL && lowR && bl > 140 && br > 140) return 'neutral';
-  return 'unknown';
-}
+// Dance moves are read by motion.js (classifyMove + MoveTracker): smoothed points, a held and settled pose.
 function editDistance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
   for (let j = 0; j <= b.length; j++) dp[0][j] = j;
@@ -568,7 +541,7 @@ class Dodge extends Level {
     } else if (this.state === 'wait') {
       if (now >= this.tGo) {
         this.side = Math.random() < 0.5 ? 'L' : 'R'; this.t0 = now; this.state = 'cue';
-        this.onset = null; this.peak = 0; this.lastX = b ? b.hipX : null; this.lastT = now;
+        this.onset = null; this.pend = null; this.peak = 0; this.lastX = b ? b.hipX : null; this.lastT = now;
         sfx.whoosh(this.side === 'L' ? -1 : 1, 450);
         if (S.mode === 'blind') say(T('raider'), { wait: false });
         SIM && SIM.cue('dodge', { side: this.side, now });
@@ -579,7 +552,13 @@ class Dodge extends Level {
         const d = b.hipX - S.base.hipX, dt = (now - this.lastT) / 1000;
         if (dt > 0 && this.lastX != null) this.peak = Math.max(this.peak, ((b.hipX - this.lastX) / dt / S.base.sw) * safe);
         this.lastX = b.hipX; this.lastT = now;
-        if (!this.onset && Math.abs(d) > 0.25 * S.base.sw) this.onset = { rt: now - this.t0, dir: Math.sign(d) };
+        // reaction time from the RAW points (no smoothing lag), counted only if the next frame agrees (no jitter blips)
+        const rb = S.bodyRaw, dr = rb ? rb.hipX - S.base.hipX : 0;
+        if (!this.onset && rb) {
+          if (Math.abs(dr) > 0.25 * S.base.sw) {
+            if (this.pend && this.pend.dir === Math.sign(dr)) this.onset = this.pend; else this.pend = { rt: now - this.t0, dir: Math.sign(dr) };
+          } else this.pend = null;
+        }
         if (d * safe > 0.8 * S.base.sw) return this.resolve(true, now);
       }
       if (now - this.t0 > this.win) this.resolve(false, now);
@@ -624,7 +603,7 @@ class Jump extends Level {
   constructor(n, speed) { super('jump'); this.n = n; this.travel = 2200 / speed; this.i = 0; this.hist = []; this.logs = []; }
   start(now) { S.dots = []; setDots(this.n); this.next(now + 700); }
   next(at) {
-    this.state = 'roll'; this.t0 = at; this.tArr = at + this.travel; this.peak = 0; this.tPeak = null; this.beeped = false; this.lastBeep = 0; this.live = 0;
+    this.state = 'roll'; this.rawY = []; this.t0 = at; this.tArr = at + this.travel; this.peak = 0; this.tPeak = null; this.beeped = false; this.lastBeep = 0; this.live = 0;
     this.logs.push({ t0: at, tArr: this.tArr, hit: null });
     SIM && SIM.cue('jump', { tArr: this.tArr });
   }
@@ -640,7 +619,8 @@ class Jump extends Level {
     if (now >= winStart && now <= winEnd && b) {
       const ref = this.hist.filter((h) => h.t > this.t0 - 200 && h.t < winStart - 100).map((h) => h.y);
       const base = ref.length ? median(ref) : S.base.hipY;
-      const rise = base - b.hipY;
+      this.rawY = (this.rawY || []).concat(S.bodyRaw ? [S.bodyRaw.hipY] : []).slice(-3);
+      const rise = base - (this.rawY.length ? median(this.rawY) : b.hipY);
       this.live = Math.max(0, rise * (S.calib.cm_per_px || 0.5));
       if (rise > this.peak) { this.peak = rise; this.tPeak = now; }
     }
@@ -871,7 +851,7 @@ class Boxing extends Level {
   }
   spawn(now) {
     const side = this.pads === 0 ? 1 : Math.random() < 0.5 ? -1 : 1;     // screen side
-    this.pad = { side, t: now, dy: rand(-0.2, 0.3) }; this.pads++;
+    this.pad = { side, t: now, dy: rand(-0.2, 0.3) }; this.pads++; this.prevW = null;
     if (S.mode === 'blind') tone(side < 0 ? 520 : 780, 90, { pan: side * 0.9 });
     SIM && SIM.cue('pad', { side, t: now });
   }
@@ -890,7 +870,16 @@ class Boxing extends Level {
       // a punch only counts after the fists came back to the body (holding the arms out doesn't score)
       const guard = [15, 16].every((i) => lm[i].v < 0.4 || Math.abs((1 - lm[i].x) * S.vw - b.shX) < 1.0 * S.base.sw);
       if (guard) this.armed = true;
-      const hit = this.armed && [15, 16].some((i) => lm[i].v >= 0.4 && Math.hypot((1 - lm[i].x) * S.vw - p.x, lm[i].y * S.vh - p.y) < r);
+      // fast punches: the fist can jump past the pad between two frames, so test the whole path it travelled
+      // since the last frame (raw points, no smoothing lag), not only where it is now
+      const raw = S.lmRaw || lm, prevW = this.prevW || {};
+      const segDist = (a, b2, q) => { const dx = b2.x - a.x, dy = b2.y - a.y, L = dx * dx + dy * dy; const u = L ? clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / L, 0, 1) : 0; return Math.hypot(a.x + u * dx - q.x, a.y + u * dy - q.y); };
+      const hit = this.armed && [15, 16].some((i) => {
+        if (raw[i].v < 0.3) return false;
+        const cur = { x: (1 - raw[i].x) * S.vw, y: raw[i].y * S.vh }, prev = prevW[i] || cur;
+        return segDist(prev, cur, p) < r;
+      });
+      this.prevW = { 15: { x: (1 - raw[15].x) * S.vw, y: raw[15].y * S.vh }, 16: { x: (1 - raw[16].x) * S.vw, y: raw[16].y * S.vh } };
       if (hit) {
         this.hits++; this.rts.push(now - this.pad.t); this.armed = false;
         const at = V(p.x, p.y);
@@ -941,27 +930,37 @@ class Combo extends Level {
     this.stepMs = FAST ? 600 / this.pattern.length : 1100;
     const list = this.pattern.map((m, i) => `${i + 1}. ${moveText(m)}`).join('. ');
     await Promise.all([say(list), sleep(FAST ? 600 : this.stepMs * this.pattern.length + 500)]);
-    this.state = 'perform'; this.got = []; this.cand = null; this.candN = 0; this.last = null;
-    this.tStart = performance.now(); this.neutralSince = null;
+    this.state = 'perform'; this.got = []; this.tracker = new MoveTracker(); this.hintT = 0;
+    this.tStart = performance.now();
+    // the standing hip height right now (player resting while the coach danced): a squat = the hips dropping from here
+    const st = this.stand || [];
+    this.base = S.scope === 'full' && st.length >= 5 ? { hipY: median(st.map((x) => x.hip)), torso: median(st.map((x) => x.torso)) }
+              : S.scope === 'full' && S.base ? { hipY: S.base.hipY, torso: 0.32 * S.base.bodyPx } : null;
     say(T('combo_go'), { wait: false }); sfx.go();
     SIM && SIM.cue('combo', { pattern: this.pattern, tryIndex: this.k, t0: this.tStart });
   }
   update(now) {
-    if (this.state !== 'perform' || !S.lm) return;
-    const mv = classify(S.lm);
-    if (mv === this.cand) this.candN++; else { this.cand = mv; this.candN = 1; }
-    const stable = this.candN >= 5 ? mv : null;
-    if (stable && stable !== 'neutral' && stable !== 'unknown' && stable !== this.last) {
-      this.got.push(stable); this.last = stable;
+    if (this.state === 'show') {         // remember how the player stands at rest, for the squat
+      const b = S.body;
+      if (b && b.full && S.lm) { (this.stand = this.stand || []).push({ t: now, hip: b.hipY, torso: b.hipY - b.shY }); this.stand = this.stand.filter((x) => now - x.t < 1500); }
+      return;
+    }
+    if (this.state !== 'perform') return;
+    const mv = S.lm ? classifyMove(S.lm, { vw: S.vw, vh: S.vh, scope: S.scope, base: this.base }) : 'unknown';
+    const stable = this.tracker.feed(now, mv, S.lm);
+    // close to the camera with the head at the very top: raised hands leave the picture
+    if (S.scope === 'upper' && S.body && S.body.nose.y < 0.1 * S.vh && now - this.hintT > 6000) { this.hintT = now; caption(T('hands_in_view')); }
+    if (stable) {
+      this.got.push(stable);
       const ok = this.pattern[this.got.length - 1] === stable;
       if (ok) { sfx.ok(); ART.floatText(headPoint().x, headPoint().y - 30 * DPR, '✓', { color: '#22c55e', size: 70 * DPR, life: 0.7 }); }
       else { sfx.bad(); ART.floatText(headPoint().x, headPoint().y - 30 * DPR, '✗', { color: '#ef4444', size: 70 * DPR, life: 0.7 }); }
       flash(ok ? 'ok' : 'bad'); caption(`${this.got.length}. ${moveText(stable)}`);
     }
-    if (stable === 'neutral') { this.last = null; this.neutralSince = this.neutralSince || now; } else if (stable) this.neutralSince = null;
+    const rest = this.tracker.restingFor;
     const timeout = this.pattern.length * 3000 + 4000;
-    if ((this.got.length >= this.pattern.length && stable === 'neutral') ||
-        (this.got.length && this.neutralSince && now - this.neutralSince > 2500) || now - this.tStart > timeout) this.endTry();
+    if ((this.got.length >= this.pattern.length && rest && now - rest > 150) ||
+        (this.got.length && rest && now - rest > 2500) || now - this.tStart > timeout) this.endTry();
   }
   async endTry() {
     this.state = 'review';
@@ -987,10 +986,21 @@ class Combo extends Level {
   }
   draw(g, V_, now) {
     if (this.state !== 'show' && this.state !== 'perform' && this.state !== 'review') return;
+    // live feedback: what the camera reads right now, and a ring that fills while the move is held
+    if (this.state === 'perform' && this.tracker && S.mode !== 'blind') {
+      const rd = this.tracker.reading, hp = { x: Math.max(VIEW.W * 0.13, 150 * DPR) }, y = 150 * DPR;   // fixed spot, top-left: never on the face
+      if (rd !== 'unknown' && rd !== 'neutral' && MOVE_TEXT[rd]) {
+        const pr = this.tracker.progress;
+        g.save(); g.lineWidth = 9 * DPR; g.strokeStyle = '#ffffff33'; g.beginPath(); g.arc(hp.x, y, 40 * DPR, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = '#22d3ee';   // same colour for every move: it shows what is read, not whether it is right g.beginPath(); g.arc(hp.x, y, 40 * DPR, -Math.PI / 2, -Math.PI / 2 + pr * Math.PI * 2); g.stroke(); g.restore();
+        g.save(); g.font = `${Math.round(40 * DPR)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(MOVE_TEXT[rd].icon, hp.x, y + 2 * DPR); g.restore();
+        bigText(g, `${T('sees')}: ${moveText(rd)}`, hp.x, y + 66 * DPR, 22 * DPR, '#fff');
+      }
+    }
     // the move cards stand in a column on the right, so they never cover the player
     const n = this.pattern.length, ch = Math.min(130 * DPR, (VIEW.H * 0.72) / n), w = Math.min(150 * DPR, ch * 1.15), h = ch - 10 * DPR;
     const x = VIEW.W - w - 22 * DPR, y0 = Math.max(100 * DPR, (VIEW.H - ch * n) / 2);
-    const cur = this.state === 'show' ? Math.floor((now - this.tShow) / this.stepMs) : -1;
+    const cur = this.state === 'show' ? Math.floor((now - this.tShow) / this.stepMs) : this.state === 'perform' ? (this.got || []).length : -1;
     for (let i = 0; i < n; i++) {
       const y = y0 + i * ch;
       const got = (this.state !== 'show') && i < (this.got || []).length;
@@ -1002,7 +1012,7 @@ class Combo extends Level {
       g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, 16 * DPR) : g.rect(x, y, w, h); g.fill(); g.stroke(); g.restore();
       bigText(g, `${i + 1}`, x + 20 * DPR, y + 22 * DPR, 22 * DPR, '#fde047');
       g.save(); g.font = `${Math.round(Math.min(48 * DPR, h * 0.5))}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle';
-      const icon = this.state === 'show' ? (i <= cur ? MOVE_TEXT[this.pattern[i]].icon : '•') : got ? (MOVE_TEXT[this.got[i]]?.icon || '?') : '?';
+      const icon = this.state === 'show' ? (i <= cur ? MOVE_TEXT[this.pattern[i]].icon : '•') : got ? (MOVE_TEXT[this.got[i]]?.icon || '?') : '?';   // memory test: next moves stay hidden
       g.fillStyle = '#fff'; g.fillText(icon, x + w / 2 + 8 * DPR, y + h / 2 + 4 * DPR); g.restore();
     }
   }
@@ -1243,11 +1253,29 @@ async function startCamera() {
 async function loadPose() {
   const mod = await import(`${MP_BASE}/vision_bundle.mjs`);
   const files = await mod.FilesetResolver.forVisionTasks(`${MP_BASE}/wasm`);
-  const opts = (delegate) => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate }, runningMode: 'VIDEO', numPoses: 1,
+  POSE_MOD = mod; POSE_FILES = files;
+  const opts = (delegate) => ({ baseOptions: { modelAssetPath: MP_MODEL_URL(MP_MODEL_NAME), delegate }, runningMode: 'VIDEO', numPoses: 1,
                                 outputSegmentationMasks: S.view === 'camera',
                                 minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
   try { landmarker = await mod.PoseLandmarker.createFromOptions(files, opts('GPU')); }
-  catch (e) { landmarker = await mod.PoseLandmarker.createFromOptions(files, opts('CPU')); }
+  catch (e) {
+    try { landmarker = await mod.PoseLandmarker.createFromOptions(files, opts('CPU')); }
+    catch (e2) { if (MP_MODEL_NAME === 'lite') throw e2; MP_MODEL_NAME = 'lite'; return loadPose(); }   // model file not reachable: lite
+  }
+  POSE_OPTS = opts;
+}
+let POSE_MOD = null, POSE_FILES = null, POSE_OPTS = null, poseMs = [], poseSwitching = false;
+// too slow for the "full" model on this device -> switch to "lite" once, without stopping the game
+function checkPoseSpeed(ms) {
+  if (MP_MODEL_NAME === 'lite' || poseSwitching || Q.get('model')) return;
+  poseMs.push(ms); if (poseMs.length < 90) return;
+  const mean = poseMs.reduce((a, b) => a + b, 0) / poseMs.length; poseMs = [];
+  if (mean <= 55) return;
+  poseSwitching = true; MP_MODEL_NAME = 'lite';
+  const opts = POSE_OPTS;
+  POSE_MOD.PoseLandmarker.createFromOptions(POSE_FILES, opts('GPU')).catch(() => POSE_MOD.PoseLandmarker.createFromOptions(POSE_FILES, opts('CPU')))
+    .then((lm) => { const old = landmarker; landmarker = lm; lastTs = 0; try { old && old.close(); } catch (e) { /* ignore */ } })
+    .catch(() => { MP_MODEL_NAME = 'full'; });
 }
 let maskPrev = null, maskCount = [], lightT = 0;
 const LUMA = document.createElement('canvas'), LCTX = LUMA.getContext('2d', { willReadFrequently: true });
@@ -1321,7 +1349,8 @@ function detect(now) {
   }
   if (!landmarker || S.src.readyState < 2) return null;
   const ts = Math.max(lastTs + 1, Math.round(now)); lastTs = ts;
-  const r = landmarker.detectForVideo(S.src, ts);
+  const t0 = performance.now(), r = landmarker.detectForVideo(S.src, ts);
+  checkPoseSpeed(performance.now() - t0);
   try { if (r.segmentationMasks && r.segmentationMasks[0]) updateMask(r.segmentationMasks[0]); } catch (e) { S.maskOk = false; }
   try { if (r.segmentationMasks) r.segmentationMasks.forEach((m) => m.close && m.close()); } catch (e) { /* ignore */ }
   return r && r.landmarks && r.landmarks[0] ? r.landmarks[0].map((p) => ({ x: p.x, y: p.y, v: p.visibility ?? 1 })) : null;
@@ -1454,6 +1483,7 @@ class SimPlayer {
 
 // ------------------------------------------------------------------ main loop + drawing
 const stage = $('stage'), G = stage.getContext('2d');
+const LMF = new LandmarkFilter();
 function resize() { DPR = window.devicePixelRatio || 1; stage.width = innerWidth * DPR; stage.height = innerHeight * DPR; }
 addEventListener('resize', resize); resize();
 function titleScene(g, W, H, groundY, now) {
@@ -1501,8 +1531,10 @@ function frame(now) {
   if (S.src) placeView(W, H, dt);
   if (S.src) {
     if (SIM) SIM.render(now);
-    S.lm = detect(now);
+    S.lmRaw = detect(now);
+    S.lm = LMF.step(S.lmRaw, now);                       // smoothed points: steadier body, moves, avatar and pulse patch
     S.body = S.lm ? bodyInfo(S.lm) : null;
+    S.bodyRaw = S.lmRaw ? bodyInfo(S.lmRaw) : null;      // raw points: reaction time, jump peak and punches (no lag at all)
     if (S.level && S.running) S.level.update(now);
     if (S.level && S.running && FULL_BODY_LEVELS.includes(S.level.key) && S.body && !S.body.full) {
       S.noFeet = S.noFeet || now;
