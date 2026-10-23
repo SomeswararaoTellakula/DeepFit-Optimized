@@ -86,7 +86,7 @@
 
     {% if doc.coach and doc.coach.story %}
     <div class="card coach">
-        <h2 style="font-size:1.05rem;margin:0 0 8px">🧠 Game master <span class="badge warn" style="background:#4c1d95;color:#ede9fe">{{ 'Muse Spark' if doc.coach.source == 'muse-spark' else 'offline coach' }}</span></h2>
+        <h2 style="font-size:1.05rem;margin:0 0 8px">🧠 Game master <span class="badge warn" style="background:#4c1d95;color:#ede9fe">{{ (doc.coach.model or 'Muse Spark') if doc.coach.source == 'muse-spark' else 'offline coach' }}</span></h2>
         <p style="margin:0 0 8px">{{ doc.coach.story }}</p>
         {% if doc.coach.focus %}<p style="margin:0 0 8px">🎯 {{ doc.coach.focus }}</p>{% endif %}
         {% if doc.coach.tip_for_parents %}<p class="muted" style="margin:0">👪 {{ doc.coach.tip_for_parents }}</p>{% endif %}

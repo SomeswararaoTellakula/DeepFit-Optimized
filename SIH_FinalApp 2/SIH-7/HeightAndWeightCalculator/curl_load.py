@@ -1,17 +1,20 @@
 """
 Weighted dumbbell curls: what the camera can and cannot tell about the weight.
 
-A camera cannot read "5 kg" off a dumbbell. Its size does not settle it either: an adjustable
-dumbbell is just as long at 2.5 kg as at 10 kg, and a water bottle can stand in for a light one.
-And the body angles depend on how heavy the weight is FOR THAT PERSON, not on its kilograms:
-a strong adult curls 10 kg with the same smooth, upright form a child shows with 2 kg.
-
-So DeepFit does what velocity-based-training devices do:
-  1. the athlete says (or picks) the dumbbell weight,
-  2. SAM 3.1 checks that a dumbbell really is in the hand (it finds objects from a text prompt),
+Size alone does not tell the weight: an adjustable dumbbell is just as long at 2.5 kg as at 10 kg,
+and a water bottle can stand in for a light one. And the body angles depend on how heavy the weight
+is FOR THAT PERSON, not on its kilograms: a strong adult curls 10 kg with the same smooth, upright
+form a child shows with 2 kg. So DeepFit:
+  1. DETECTS the weight: the athlete shows the dumbbell to the camera and a vision model reads the
+     number printed on it ("5 KG", "10 LB") - vision_reader.read_dumbbell. If no number is visible it
+     estimates from the type and size and asks the athlete to confirm (or pick the weight),
+  2. SAM 3.1 checks that a dumbbell really is in the hand during the set,
   3. the camera measures how that weight moved - per rep: how far the elbow bent (top angle),
      how fast the hand rose (m/s), how much the body swung and how far the elbow drifted forward,
-     and how much the speed dropped from the first reps to the last (fatigue).
+     and how much the speed dropped from the first reps to the last (fatigue),
+  4. the INTERNAL BENCHMARKS check the weight (weight_check): for that weight and the athlete's
+     age group, the table gives the expected lifting speed. A dumbbell that moves far faster than
+     anyone in the group could move that weight was lighter than detected; far slower = heavier.
 From weight + reps + speed it estimates the one-rep max (1RM): the heaviest curl the athlete could do once.
 
 Benchmarks per weight live in curl_load_benchmarks.csv (edit it in Excel). Each row gives, for an
@@ -188,6 +191,43 @@ def summarise(load: Optional[float], reps: List[Dict], counts: Dict[str, int]) -
     }
 
 
+PLAUSIBLE_1RM = (0.35, 4.0)      # implied 1RM / the group's reference 1RM that still fits (starter values; the reference is deliberately low)
+MAX_1RM_PER_BW = 0.6             # a one-arm curl 1RM above 60 % of body weight is beyond elite lifters
+
+
+def weight_check(summary: Dict, ref_1rm_kg: float, body_weight_kg: Optional[float] = None) -> Dict:
+    """Does the weight fit how it moved? The speed of the first reps says how heavy the dumbbell was
+    FOR THIS ATHLETE (% of their 1RM). Weight / that % = the 1RM they would need. If that is far above
+    what anyone in their age group (or anyone at their body weight) can lift, the dumbbell was lighter
+    than detected; if far below, it was heavier (or the reps were slowed on purpose)."""
+    load, v = summary.get("load_kg"), summary.get("first_speed_m_s")
+    if not load:
+        return {"status": "no_weight"}
+    if v is None or summary.get("reps", 0) < 3:
+        return {"status": "not_enough_reps", "text": "Do at least 3 reps so the weight can be checked."}
+    exp_v = expected_speed(load, ref_1rm_kg)
+    pct = min(max((V0 - v) / (V0 - VMVT), 0.05), 1.0)        # share of the athlete's 1RM, from the speed
+    implied = load / pct
+    ratio = implied / ref_1rm_kg
+    like = max(0.5, round(ref_1rm_kg * pct * 2) / 2)           # weight a typical athlete of the group lifts this fast
+    per_bw = implied / body_weight_kg if body_weight_kg else None
+    out = {"expected_speed_m_s": exp_v, "measured_speed_m_s": v, "implied_1rm_kg": round(implied, 1),
+           "ratio_to_group": round(ratio, 2), "moves_like_kg": like, "limits": list(PLAUSIBLE_1RM)}
+    if ratio > PLAUSIBLE_1RM[1] or (per_bw is not None and per_bw > MAX_1RM_PER_BW):
+        out.update(status="lighter", ok=False,
+                   text=f"It moved like a lighter weight: at {load:g} kg we expect about {exp_v} m/s for your group, "
+                        f"you lifted at {v} m/s (like ≈ {like:g} kg). Check the number on the dumbbell.")
+    elif ratio < PLAUSIBLE_1RM[0]:
+        out.update(status="heavier", ok=False,
+                   text=f"It moved like a heavier weight: at {load:g} kg we expect about {exp_v} m/s for your group, "
+                        f"you lifted at {v} m/s (like ≈ {like:g} kg). Check the dumbbell - or don't slow the lift on purpose.")
+    else:
+        out.update(status="consistent", ok=True,
+                   text=f"The speed fits a {load:g} kg dumbbell: at {v} m/s it was about {round(100 * pct)}% of your max "
+                        f"(a typical athlete in your group lifts it at ≈ {exp_v} m/s).")
+    return out
+
+
 def evaluate(summary: Dict, age=None, gender=None, population: str = "standard", body_weight_kg: Optional[float] = None) -> Dict:
     """Benchmark for THIS weight: clean reps against the target for the nearest listed dumbbell."""
     load = summary.get("load_kg")
@@ -214,6 +254,7 @@ def evaluate(summary: Dict, age=None, gender=None, population: str = "standard",
         ratio = clean / target
         out.update({"target": target, "met": ratio >= 1.0, "percent_of_target": round(100 * ratio),
                     "rating": "Needs work" if ratio < 0.75 else "Fair" if ratio < 1.0 else "Good" if ratio < 1.5 else "Excellent"})
+    out["weight_check"] = weight_check(summary, float(r["ref_1rm_kg"]), body_weight_kg)
     est = summary.get("est_1rm_kg")
     if est:
         out["strength_vs_ref_pct"] = round(100 * est / float(r["ref_1rm_kg"]))

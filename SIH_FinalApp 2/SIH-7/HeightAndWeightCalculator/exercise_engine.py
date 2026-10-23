@@ -545,6 +545,7 @@ class DumbbellCurls(Exercise):
         self.load_kg: Optional[float] = None
         self.body_weight_kg: Optional[float] = None
         self.load_check: Optional[Dict] = None          # filled by the server when SAM 3.1 looked for the dumbbell
+        self.load_detect: Optional[Dict] = None         # how the weight was found: read off the dumbbell, estimated or typed
         self.reps_detail: List[Dict] = []
         self._forearm = {"left": deque(maxlen=90), "right": deque(maxlen=90)}
         self._upper = {"left": deque(maxlen=90), "right": deque(maxlen=90)}
@@ -659,6 +660,8 @@ class DumbbellCurls(Exercise):
         r["reps_detail"] = self.reps_detail
         if self.load_check is not None:
             r["load_check"] = self.load_check
+        if self.load_detect is not None:
+            r["load_detect"] = self.load_detect
         return r
 
 
@@ -1057,15 +1060,19 @@ def catalog() -> List[Dict]:
 # ---------------------------------------------------------------- extra tests in their own modules
 def _register_extras():
     """Coachability Challenge and Growth Measures live in their own files (they import this one)."""
-    try:
-        from coachability import CoachabilityChallenge
-        from growth import GrowthMeasures
-    except Exception:            # imported in an unusual order; exercise_blueprint imports this module first
-        return
-    for cls in (GrowthMeasures, CoachabilityChallenge):
-        if cls.key not in EXERCISES:
-            ORDER.append(cls)
-            EXERCISES[cls.key] = cls
+    import importlib
+    for mod, name in (("stature", "HeightWeight"), ("growth", "GrowthMeasures"), ("coachability", "CoachabilityChallenge")):
+        try:
+            cls = getattr(importlib.import_module(mod), name)
+        except Exception:        # that module is being imported right now (it imports this one) - it registers itself
+            continue
+        add_exercise(cls)
+
+
+def add_exercise(cls):
+    if cls.key not in EXERCISES:
+        ORDER.append(cls)
+        EXERCISES[cls.key] = cls
 
 
 _register_extras()

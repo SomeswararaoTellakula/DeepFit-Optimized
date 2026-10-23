@@ -236,7 +236,16 @@
                 el.status.textContent = m; say(m, true); caption(m); $('in-weight').focus(); return;
             }
         }
-        if (EX.key === 'dumbbell_curls') body.load_kg = Number($('in-load').value) || 0;
+        if (EX.key === 'dumbbell_curls') {
+            body.load_kg = Number($('in-load').value) || 0;
+            body.load_detect = (detected && Number(detected.kg) === body.load_kg) ? detected : (body.load_kg ? { source: 'typed' } : null);
+        }
+        if (EX.key === 'height_weight') {
+            const w = Number($('in-hw-weight').value) || null;
+            body.weight_kg = w;
+            body.weight_source = (scaleRead && w === Number(scaleRead.kg)) ? 'scale_photo' : 'typed';
+            body.weight_detail = body.weight_source === 'scale_photo' ? scaleRead : null;
+        }
         const r = await fetch(`/ex/${EX.key}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (res.status !== 'success') {
@@ -327,6 +336,14 @@
                 (r ? `<span>Last: ${r.speed != null ? r.speed + ' m/s' : '–'}</span><span>Elbow ${r.top_angle}°</span>` +
                      `<span class="${r.clean ? 'ok' : 'bad'}">${r.clean ? '✓ clean' : '✗ ' + (r.swing_pct > 15 ? 'body swing' : 'elbow drift')}</span>` : '') : '';
         }
+        if (s.height && $('hw-live')) {
+            const H = s.height;
+            const what = H.reference === 'a4' ? 'A4' : 'sheet';
+            $('hw-live').innerHTML =
+                `<span class="${H.floor ? 'ok' : 'bad'}">${H.floor ? '✓' : '…'} FLOOR ${what}</span>` +
+                `<span class="${H.top ? 'ok' : 'bad'}">${H.top ? '✓' : '…'} TOP ${what}</span>` +
+                `<span>Samples ${Math.min(H.samples, H.need)}/${H.need}</span>` + (H.live_cm ? `<span>Now ≈ ${H.live_cm} cm</span>` : '');
+        }
         if (EX.key === 'coachability') {
             renderCoach(s);
             el.value.textContent = Math.round(s.score);
@@ -414,7 +431,11 @@
                 ['How heavy it was for you', A.intensity ? A.intensity : '–'],
                 ['Estimated one-rep max (each arm)', A.est_1rm_kg ? `≈ ${A.est_1rm_kg} kg` + (A.est_1rm_note ? ` - ${A.est_1rm_note}` : '') : 'needs a heavier dumbbell'],
                 ['Next time try', A.next_load_kg ? `${A.next_load_kg} kg` : '–'],
-                ['Weight check', seen],
+                ['How the weight was found', (() => { const d = r.load_detect || {};
+                    return d.source === 'label' ? `read "${d.label_text || r.load_kg + ' kg'}" on the dumbbell` :
+                           d.source === 'estimate' ? 'estimated from its look, confirmed by you' : 'picked by you'; })()],
+                ['Weight vs benchmark', (b.weight_check && b.weight_check.text) ? `${b.weight_check.ok === false ? '⚠ ' : b.weight_check.ok ? '✓ ' : ''}${b.weight_check.text}` : '–'],
+                ['Dumbbell in the hand', seen],
             ];
             const t = document.createElement('table'); t.className = 'load-table';
             t.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td><b>${v}</b></td></tr>`).join('');
@@ -426,6 +447,27 @@
                     sp.map((v, i) => `<rect x="${i * bw + 1}" y="${H - H * v / mx}" width="${bw - 2}" height="${H * v / mx}" fill="${(r.reps_detail[i] || {}).clean ? '#22c55e' : '#f87171'}"/>`).join('') +
                     `<text x="0" y="${H + 12}" fill="#94a3b8" font-size="10">speed of each rep (green = clean)</text></svg>`);
             }
+        }
+        if (EX.key === 'height_weight') {
+            const M = r.measurement || {};
+            $('result-value').textContent = r.height_cm ? `${r.height_cm} cm` + (r.weight_kg ? ` · ${r.weight_kg} kg` : '') : 'Not measured';
+            rating.textContent = r.bmi ? `BMI ${r.bmi}` + (r.bmi_category ? ` · ${r.bmi_category}` : '') : (r.height_cm ? 'Height measured' : 'Try again');
+            rating.className = 'rating ' + ({ Healthy: 'Good', Underweight: 'Fair', Overweight: 'Fair', Obese: 'Needs-work' }[r.bmi_category] || '');
+            $('result-target').textContent = r.bmi_note || '';
+            const ws = r.weight_source === 'scale_photo' ? `read from your scale photo (${(r.weight_detail || {}).reading ?? r.weight_kg} ${(r.weight_detail || {}).unit || 'kg'})`
+                     : r.weight_kg ? 'typed' : 'not given - add it for the BMI';
+            const rows = [
+                ['Height', r.height_cm ? `${r.height_cm} cm` : '–'],
+                ['How sure', M.stable ? `${M.samples} frames agreed within ±${M.spread_cm} cm (accuracy ≈ ±1 cm)` : 'did not settle - stand still against the wall'],
+                ['Measured with', (M.reference === 'marker' ? 'DeepFit FLOOR + TOP sheets' : M.reference === 'a4' ? 'two A4 sheets' : '–') +
+                    (M.camera_distance_cm ? ` · camera ${(M.camera_distance_cm / 100).toFixed(1)} m away, ${M.camera_height_cm} cm high` : '')],
+                ['Weight', r.weight_kg ? `${r.weight_kg} kg - ${ws}` : ws],
+                ['BMI', r.bmi ? `${r.bmi}${r.bmi_category ? ' (' + r.bmi_category + ')' : ''}` : '–'],
+            ];
+            const t = document.createElement('table'); t.className = 'load-table';
+            t.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td><b>${v}</b></td></tr>`).join('');
+            extra.appendChild(t);
+            if (r.incomplete) $('result-note').textContent = 'Height did not settle in time: ' + (r.feedback || 'stand still against the wall next to the marker') + '.';
         }
         if (r.maturity) {
             const m = r.maturity;
@@ -454,6 +496,90 @@
         el.value.textContent = '0';
         el.start.disabled = !verified;
         say('Ready to retake. Press space to start.', true);
+    });
+
+    // ------------------------------------------------------------ photo dialog (dumbbell number / scale display)
+    const Snap = (() => {
+        let stream = null, done = null, cfg = null;
+        const box = $('snap'), video = $('snap-video'), img = $('snap-img'), status = $('snap-status');
+        function stopCam() { if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; } }
+        function close(result) { stopCam(); box.classList.remove('open'); if (done) { const d = done; done = null; d(result); } }
+        async function send(blob) {
+            status.textContent = 'Reading…'; $('snap-take').disabled = true;
+            img.src = URL.createObjectURL(blob); img.style.display = 'block'; video.style.display = 'none'; stopCam();
+            const fd = new FormData(); fd.append('photo', blob, 'photo.jpg');
+            let res;
+            try { res = await (await fetch(cfg.url, { method: 'POST', body: fd })).json(); }
+            catch (e) { res = { ok: false, error: 'No connection to the server.' }; }
+            $('snap-take').disabled = false;
+            if (res.ok) { close(res); return; }
+            status.textContent = res.error || 'Could not read it - try again.';
+            say(status.textContent, true);
+            $('snap-take').textContent = '📸 Try again';
+        }
+        async function startCam() {
+            img.style.display = 'none'; video.style.display = 'block'; $('snap-take').textContent = '📸 Take photo';
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' } });
+                video.srcObject = stream;
+            } catch (e) { status.textContent = 'Camera not available here - upload a photo instead.'; video.style.display = 'none'; }
+        }
+        $('snap-take').addEventListener('click', () => {
+            if (!stream) { startCam(); status.textContent = ''; return; }
+            const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight;
+            if (!c.width) return;
+            c.getContext('2d').drawImage(video, 0, 0);
+            c.toBlob((b) => b && send(b), 'image/jpeg', 0.9);
+        });
+        $('snap-file').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) send(f); });
+        $('snap-cancel').addEventListener('click', () => close(null));
+        box.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+        return {
+            open(c) {
+                cfg = c; $('snap-title').textContent = c.title; $('snap-hint').textContent = c.hint; status.textContent = '';
+                box.classList.add('open'); startCam(); $('snap-take').focus(); say(c.title + '. ' + c.hint, true);
+                return new Promise((resolve) => { done = resolve; });
+            },
+        };
+    })();
+
+    // ------------------------------------------------------------ dumbbell: detect the weight
+    let detected = null;
+    function setLoad(kg) {
+        $('in-load').value = kg;
+        document.querySelectorAll('.load-pick').forEach((x) => x.classList.toggle('on', Number(x.dataset.kg) === Number(kg)));
+    }
+    if ($('detect-load')) $('detect-load').addEventListener('click', async () => {
+        const res = await Snap.open({ title: 'Show your dumbbell', url: '/api/dumbbell/detect',
+            hint: 'Hold it close with the end that says "5 KG" (or similar) facing the camera, then take the photo.' });
+        if (!res) return;
+        detected = { source: res.source, kg: res.kg, label_text: res.label_text || null, model: res.model, sure: res.sure, object: res.object };
+        setLoad(res.kg);
+        const box = $('load-detected');
+        if (res.source === 'label') {
+            box.className = 'detected ok';
+            box.textContent = `✓ Detected ${res.kg} kg - read "${res.label_text || res.kg + ' kg'}" on the ${res.object || 'dumbbell'}` + (res.model ? ` · ${res.model}` : '');
+            say(`Detected ${res.kg} kilograms.`, true);
+        } else {
+            box.className = 'detected warn';
+            box.textContent = `≈ ${res.kg} kg - no number was readable, so this is a guess from its look. Tap the right weight below if it's wrong.`;
+            say(`Looks like about ${res.kg} kilograms. Please confirm the weight.`, true);
+        }
+    });
+
+    // ------------------------------------------------------------ height & weight: read the scale
+    let scaleRead = null;
+    if ($('read-scale')) $('read-scale').addEventListener('click', async () => {
+        const res = await Snap.open({ title: 'Photo of your scale', url: '/api/vision/scale',
+            hint: 'Stand on the scale, wait until the number stops changing, then photograph the display (fill the frame, no glare).' });
+        if (!res) return;
+        scaleRead = { kg: res.kg, reading: res.reading, unit: res.unit, model: res.model, confidence: res.confidence };
+        $('in-hw-weight').value = res.kg;
+        const box = $('scale-read');
+        box.className = 'detected ' + (res.sure ? 'ok' : 'warn');
+        box.textContent = (res.sure ? '✓ ' : '') + `Read ${res.reading} ${res.unit} on the display → ${res.kg} kg` +
+            (res.sure ? '' : ' - not fully sure, check the number') + (res.model ? ` · ${res.model}` : '');
+        say(`Your weight: ${res.kg} kilograms.`, true);
     });
 
     // ------------------------------------------------------------ dumbbell weight picker

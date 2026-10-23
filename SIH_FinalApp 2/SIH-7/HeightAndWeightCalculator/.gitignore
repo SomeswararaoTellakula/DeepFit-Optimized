@@ -6,3 +6,5 @@ __pycache__/DeepFitClassifier.cpython-36.pyc
 deepfit/
 *.pyc
 **/venv*/
+# MediaPipe Tasks model, downloaded on first use by pose_backend.py
+**/models/pose_landmarker_*.task

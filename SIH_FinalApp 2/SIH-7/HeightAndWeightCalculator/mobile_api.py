@@ -29,7 +29,10 @@ Endpoints
     GET  /api/v1/hub?mode=            tests, targets, last results, next test, Hidden Potential
     POST /api/v1/identity/verify      {frame, live}
     POST /api/v1/results              skeleton + snapshots (JSON, optionally gzip)
-    POST /api/v1/height_weight        {height_cm, weight_kg}
+    POST /api/v1/height_weight        {height_cm, weight_kg, height_source, weight_source, measurement, weight_detail}
+    POST /api/v1/height_weight/measure {photos: [jpeg base64, ...]}   height from photos (marker / A4 on the wall)
+    POST /api/v1/vision/scale         {photo}   weight read off the scale display
+    POST /api/v1/dumbbell/detect      {photo}   dumbbell weight read off the dumbbell
     GET  /api/v1/history?limit=
     GET  /api/v1/potential?mode=
     POST /api/v1/chat                 {message}
@@ -316,8 +319,10 @@ def hub(ath):
             info = dict(XB.HEIGHT_WEIGHT_CARD)
             info.update({"camera": "none", "duration": None, "metric": "height", "unit": "cm",
                          "higher_is_better": True, "kind": "height_weight",
-                         "setup": ["Measure standing height with a tape (no shoes) and weight with a scale",
-                                   "Type both numbers in - they are used to convert jumps and reach to cm"]})
+                         "setup": ["Height: tape the DeepFit marker (or an A4 sheet) on the wall, stand next to it, "
+                                   "and let the camera measure you - or type a tape measurement",
+                                   "Weight: photograph your scale's display - or type it",
+                                   "Height is used to convert jumps and reach to cm"]})
             info.pop("url", None)
         else:
             info = EE.EXERCISES[k].info()
@@ -592,6 +597,9 @@ def upload_result(ath):
     ex, replay, last_t = rerun(key, frames, width, height, h_cm, ath, inputs, pattern, d.get("pattern_code"), manual, load_kg)
     if load_kg:
         ex.load_check = _phone_dumbbell_check(ex, d.get("snapshots") or [], frames, width, height)
+        det = d.get("load_detect") if isinstance(d.get("load_detect"), dict) else {}
+        ex.load_detect = ({k: det.get(k) for k in ("source", "kg", "label_text", "model", "sure", "object")}
+                          if _num(det.get("kg"), 0.25, 60) == load_kg else {"source": "typed"})
     res = ex.result()
     client_value = _num((d.get("client_result") or {}).get("value"), -1e6, 1e6)
     same = client_value is None or abs(client_value - float(res["value"])) <= max(VALUE_TOLERANCE, 0.01 * abs(res["value"]))
@@ -647,6 +655,7 @@ def _out(doc: Dict, ath: Dict) -> Dict:
 @json_errors
 @login_required
 def height_weight(ath):
+    import stature
     d = _body()
     h, w = _num(d.get("height_cm"), 100, 230), _num(d.get("weight_kg"), 15, 200)
     if h is None or w is None:
@@ -657,12 +666,74 @@ def height_weight(ath):
     client_id = str(d.get("client_id") or "")[:64]
     if client_id and db["Height and Weight"].find_one({"user_email": ath.get("email"), "client_id": client_id}):
         return _ok(status="saved", duplicate=True)
-    bmi = round(w / (h / 100) ** 2, 1)
+    hs = d.get("height_source") if d.get("height_source") in ("camera", "tape") else "tape"
+    ws = d.get("weight_source") if d.get("weight_source") in ("scale_photo", "typed") else "typed"
+    m = d.get("measurement") if isinstance(d.get("measurement"), dict) else {}
+    info = stature.bmi_info(round(h, 1), round(w, 1), ath.get("age"))
+    now = datetime.utcnow()
     db["Height and Weight"].insert_one({"user_email": ath.get("email"), "height_cm": round(h, 1), "weight_kg": round(w, 1),
-                                        "bmi": bmi, "timestamp": datetime.utcnow(), "source": "mobile_manual",
-                                        "measured_by": "tape and scale", "client_id": client_id or None})
-    return _ok(status="saved", bmi=bmi, height_cm=round(h, 1), weight_kg=round(w, 1),
-               next_test=_next_key(XB._latest_by_exercise(ath)))
+                                        "bmi": info["bmi"], "bmi_category": info.get("bmi_category"), "timestamp": now,
+                                        "source": "mobile_camera" if hs == "camera" else "mobile_manual",
+                                        "measured_by": ("camera + " + str(m.get("reference") or "reference")) if hs == "camera" else "tape",
+                                        "weight_source": ws, "client_id": client_id or None})
+    if hs == "camera":        # same record the website's camera test writes (dashboard reads it first)
+        db["Final_Estimated_Height_and_Weight"].insert_one({
+            "user_email": ath.get("email"), "final_height_cm": round(h, 1), "final_weight_kg": round(w, 1),
+            "bmi": info["bmi"], "bmi_category": info.get("bmi_category"),
+            "height_uncertainty": f"±{max(0.5, _num(m.get('spread_cm'), 0, 10) or 0.5):.1f} cm",
+            "weight_uncertainty": "as the scale" if ws == "scale_photo" else "typed", "confidence_level": "99%",
+            "total_instances": int(_num(m.get("photos_used"), 0, 50) or 0), "method": f"phone camera + {m.get('reference') or 'reference'}",
+            "timestamp": now})
+    return _ok(status="saved", bmi=info["bmi"], bmi_category=info.get("bmi_category"), bmi_note=info.get("bmi_note"),
+               height_cm=round(h, 1), weight_kg=round(w, 1), next_test=_next_key(XB._latest_by_exercise(ath)))
+
+
+@mobile_bp.route("/height_weight/measure", methods=["POST"])
+@json_errors
+@login_required
+def height_measure(ath):
+    """Height from 3-6 still photos taken by the phone: the athlete next to the marker / A4 sheet on the wall."""
+    import stature
+    import vision_reader
+    photos = (_body().get("photos") or [])[:6]
+    imgs = []
+    for p in photos:
+        raw = vision_reader.decode_b64_image(p)
+        img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR) if raw else None
+        if img is not None:
+            imgs.append(img)
+    if not imgs:
+        return _err("No photos received.")
+    try:
+        out = stature.measure_photos(imgs)
+    except Exception as e:
+        log_error(f"height measure failed: {e}")
+        return _err("Body tracking could not start on the server (the first run downloads a small model).", 503)
+    if not out.get("ok"):
+        return _err(out.get("message") or "Could not measure - try again.", 422, **{k: v for k, v in out.items() if k != "ok"})
+    return _ok(**out)
+
+
+@mobile_bp.route("/vision/scale", methods=["POST"])
+@json_errors
+@login_required
+def vision_scale(ath):
+    import vision_reader
+    raw = vision_reader.decode_b64_image(_body().get("photo"))
+    if raw is None:
+        return _err("No photo received.")
+    return jsonify(vision_reader.read_scale(raw))
+
+
+@mobile_bp.route("/dumbbell/detect", methods=["POST"])
+@json_errors
+@login_required
+def dumbbell_detect(ath):
+    import vision_reader
+    raw = vision_reader.decode_b64_image(_body().get("photo"))
+    if raw is None:
+        return _err("No photo received.")
+    return jsonify(vision_reader.read_dumbbell(raw))
 
 
 @mobile_bp.route("/history")

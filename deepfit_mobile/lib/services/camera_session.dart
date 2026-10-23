@@ -15,13 +15,14 @@ class CameraSession {
   CameraDescription? description;
   final PoseVision vision;
   final bool detectPose;
+  final ResolutionPreset preset;
   void Function(VisionFrame frame)? onFrame;
   Completer<RawFrame?>? _grab;
   bool _busy = false;
   bool _closed = false;
   String? error;
 
-  CameraSession({required this.detectPose, bool mirroredStream = false})
+  CameraSession({required this.detectPose, bool mirroredStream = false, this.preset = ResolutionPreset.medium})
       : vision = PoseVision(mirroredStream: mirroredStream);
 
   bool get ready => controller?.value.isInitialized == true && !_closed;
@@ -35,7 +36,7 @@ class CameraSession {
       }
       final want = front ? CameraLensDirection.front : CameraLensDirection.back;
       description = cams.firstWhere((c) => c.lensDirection == want, orElse: () => cams.first);
-      final c = CameraController(description!, ResolutionPreset.medium,
+      final c = CameraController(description!, preset,
           enableAudio: false,
           imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888);
       controller = c;
@@ -74,14 +75,14 @@ class CameraSession {
     }
   }
 
-  /// The next camera frame as a base64 JPEG (upright, max 640 px), or null.
-  Future<String?> grabJpegBase64({Duration timeout = const Duration(seconds: 3)}) async {
+  /// The next camera frame as a base64 JPEG (upright, max 640 px - or 1920 px when [large]), or null.
+  Future<String?> grabJpegBase64({Duration timeout = const Duration(seconds: 3), bool large = false}) async {
     if (!ready) return null;
     final c = Completer<RawFrame?>();
     _grab = c;
     final raw = await c.future.timeout(timeout, onTimeout: () => null);
     if (raw == null) return null;
-    final bytes = await compute(encodeJpegFrame, raw);
+    final bytes = await compute(large ? encodeJpegFrameLarge : encodeJpegFrame, raw);
     return base64Encode(bytes);
   }
 

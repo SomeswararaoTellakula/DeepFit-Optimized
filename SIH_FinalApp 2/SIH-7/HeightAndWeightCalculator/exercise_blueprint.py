@@ -29,6 +29,7 @@ from flask import Blueprint, Response, abort, jsonify, render_template, request,
 import benchmarks
 import exercise_engine as EE          # first: registers the Coachability + Growth tests
 import passport
+import pose_backend
 import potential
 from db_config import get_db
 from error_logger import log_error, log_info
@@ -51,7 +52,7 @@ RECOMMENDED = ["height_weight", "growth_measures", "partial_curlup", "pushups", 
                "dash_50m", "run_600m"]
 HEIGHT_WEIGHT_CARD = {
     "key": "height_weight", "name": "Height & Weight (BMI)", "icon": "📏", "category": "body composition",
-    "khelo_india": True, "camera": "front", "url": "/height", "metric": "bmi", "unit": "",
+    "khelo_india": True, "camera": "front", "url": "/ex/height_weight", "metric": "bmi", "unit": "",
     "setup": ["Stand 2-3 m from the camera, full body visible"],
 }
 
@@ -217,17 +218,19 @@ def _latest_by_exercise(ath: Dict) -> Dict[str, Dict]:
         k = d.get("exercise_type")
         if k and (k not in latest or str(d.get("timestamp", "")) > str(latest[k].get("timestamp", ""))):
             latest[k] = d
-    # legacy height/weight page stores elsewhere
+    # height & weight is also kept where the dashboard reads it (and the phone's tape entry goes there)
     db = get_db()
     if db is not None and ath.get("email"):
+        def ts(d):
+            return str(d.get("timestamp", "")).replace(" ", "T")[:19]
         for coll in ("Final_Estimated_Height_and_Weight", "Height and Weight"):
             try:
                 d = db[coll].find_one({"user_email": ath["email"]}, sort=[("timestamp", -1)])
-                if d:
+                if d and ("height_weight" not in latest or ts(d) > ts(latest["height_weight"])):
                     latest["height_weight"] = {"exercise_type": "height_weight",
                                                "value": d.get("final_height_cm") or d.get("height_cm"), "unit": "cm",
-                                               "timestamp": str(d.get("timestamp", ""))}
-                    break
+                                               "benchmark": {"rating": d.get("bmi_category")} if d.get("bmi_category") else None,
+                                               "timestamp": ts(d)}
             except Exception:
                 pass
     return latest
@@ -240,10 +243,6 @@ def _next_test(ath: Dict, mode: str, just_done: Optional[str] = None) -> Optiona
     for k in RECOMMENDED:
         if k in done:
             continue
-        if k == "height_weight":
-            if ath["kind"] != "user":
-                continue      # legacy height page needs a normal account
-            return {"key": k, "name": HEIGHT_WEIGHT_CARD["name"], "url": "/height"}
         cls = EE.EXERCISES[k]
         return {"key": k, "name": cls.name, "url": f"/ex/{k}?mode={mode}"}
     return None
@@ -304,6 +303,8 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
             saved = True
             if replay and replay["frames"] and "_id" in doc:
                 db.pose_replays.insert_one({"_id": doc["_id"], **replay})
+            if ex.key == "height_weight" and doc.get("height_cm") and not doc.get("incomplete") and doc.get("user_email"):
+                db["Final_Estimated_Height_and_Weight"].insert_one(height_record(doc))   # dashboard + reports read this
         except Exception as e:
             log_error(f"Saving {ex.key} result failed: {e}")
     out = {k: v for k, v in doc.items() if k not in ("user_id", "date", "_id")}
@@ -317,8 +318,26 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
     return out
 
 
+def height_record(doc: Dict) -> Dict:
+    """Same fields the old height page wrote, so the dashboard, reports and qualification keep working."""
+    m = doc.get("measurement") or {}
+    return {"user_email": doc.get("user_email"), "final_height_cm": doc.get("height_cm"),
+            "final_weight_kg": doc.get("weight_kg"), "bmi": doc.get("bmi"), "bmi_category": doc.get("bmi_category"),
+            "height_uncertainty": f"±{max(0.5, m.get('spread_cm') or 0.5):.1f} cm",
+            "weight_uncertainty": "as the scale" if doc.get("weight_source") == "scale_photo" else "typed",
+            "confidence_level": "99%", "total_instances": m.get("samples"),
+            "method": f"camera + {m.get('reference') or 'reference'}; weight {doc.get('weight_source') or 'not given'}",
+            "exercise_result_id": str(doc.get("_id", "")), "timestamp": datetime.utcnow()}
+
+
 def load_benchmark(ex, res: Dict, ath: Dict, population: str) -> Optional[Dict]:
-    """Weighted curls are compared with the target for the weight that was lifted (curl_load_benchmarks.csv)."""
+    """Weighted curls are compared with the target for the weight that was lifted (curl_load_benchmarks.csv).
+    Height & weight has no 'score' - its benchmark is the BMI category (or BMI-for-age under 18)."""
+    if ex.key == "height_weight":
+        if not res.get("height_cm"):
+            return {"available": False}
+        return {"available": True, "unit": "cm", "rating": res.get("bmi_category") or ("Measured" if res.get("bmi") else "Height only"),
+                "bmi": res.get("bmi"), "note": res.get("bmi_note") or "Add your weight to get the BMI."}
     if not isinstance(ex, EE.DumbbellCurls) or not res.get("load_kg"):
         return None
     import curl_load
@@ -344,13 +363,11 @@ def tests_hub():
     cards = []
     latest = _latest_by_exercise(ath) if ath else {}
     for k in RECOMMENDED:
+        info = EE.EXERCISES[k].info()
+        info["url"] = f"/ex/{k}?mode={mode}"
+        info["available"] = True
         if k == "height_weight":
-            info = dict(HEIGHT_WEIGHT_CARD)
-            info["available"] = bool(ath and ath["kind"] == "user")
-        else:
-            info = EE.EXERCISES[k].info()
-            info["url"] = f"/ex/{k}?mode={mode}"
-            info["available"] = True
+            info["metric"] = "bmi"
         last = latest.get(k)
         if last:
             info["last"] = {"value": last.get("value"), "unit": last.get("unit"),
@@ -436,6 +453,18 @@ def start(key):
             if load and not 0.5 <= load <= 60:
                 return jsonify({"status": "error", "message": "Dumbbell weight must be between 0.5 and 60 kg."}), 400
             ACTIVE.ex.configure(load_kg=load or None, body_weight_kg=_weight_for(ath))
+            det = data.get("load_detect") if isinstance(data.get("load_detect"), dict) else None
+            try:
+                same = det is not None and abs(float(det.get("kg")) - load) < 0.01
+            except (TypeError, ValueError):
+                same = False
+            ACTIVE.ex.load_detect = ({k: det.get(k) for k in ("source", "kg", "label_text", "model", "sure", "object")}
+                                     if same and load else {"source": "typed"} if load else None)
+        if key == "height_weight":
+            wd = data.get("weight_detail") if isinstance(data.get("weight_detail"), dict) else None
+            ACTIVE.ex.configure(weight_kg=data.get("weight_kg"), weight_source=data.get("weight_source"),
+                                weight_detail={k: wd.get(k) for k in ("reading", "unit", "model", "confidence")} if wd else None,
+                                age=ath.get("age"))
         if key == "growth_measures":
             def num(name, lo, hi):
                 try:
@@ -450,13 +479,19 @@ def start(key):
         vs = session.get("identity_verified") or {}
         ACTIVE.precheck_score = vs.get("score")
         if cls.camera != "none":
-            ACTIVE.camera = open_camera(1280 if key == "broad_jump" else 640, 720 if key == "broad_jump" else 480)
+            big = key in ("broad_jump", "height_weight")
+            ACTIVE.camera = open_camera(1280 if big else 640, 720 if big else 480)
             if not ACTIVE.camera.isOpened():
                 _release()
                 return jsonify({"status": "error", "message": "Camera unavailable"})
-            import mediapipe as mp
-            ACTIVE.pose = mp.solutions.pose.Pose(model_complexity=POSE_COMPLEXITY,
-                                                 min_detection_confidence=0.5, min_tracking_confidence=0.5)
+            try:       # works with old (mp.solutions) and new (Tasks API) MediaPipe - see pose_backend.py
+                ACTIVE.pose = pose_backend.PoseBackend(segmentation=getattr(cls, "needs_frames", False),
+                                                       complexity=POSE_COMPLEXITY)
+            except Exception as e:
+                _release()
+                log_error(f"Body tracking could not start: {e}")
+                return jsonify({"status": "error", "message": "Body tracking could not start (the first run downloads a "
+                                                              f"small model and needs internet): {e}"})
             ACTIVE.monitor.reset(ath["verify_key"], ath.get("photo"))
         ACTIVE.recording = True
         ACTIVE.started = time.time()
@@ -465,12 +500,16 @@ def start(key):
 
 
 def _draw(frame, ex: EE.Exercise, pose_landmarks):
-    if pose_landmarks is not None:
-        import mediapipe as mp
-        mp.solutions.drawing_utils.draw_landmarks(
-            frame, pose_landmarks, mp.solutions.pose.POSE_CONNECTIONS,
-            mp.solutions.drawing_utils.DrawingSpec(color=(66, 200, 245), thickness=2, circle_radius=2),
-            mp.solutions.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=2))
+    pose_backend.draw(frame, pose_landmarks)
+    refs = getattr(ex, "ref", None)
+    if isinstance(refs, dict) and refs.get("kind"):          # height test: show the wall sheets that were found
+        import numpy as np
+        for role in ("floor", "top"):
+            q = refs.get(role)
+            if q and q.get("corners"):
+                cv2.polylines(frame, [np.array(q["corners"], dtype=np.int32)], True, (60, 220, 60), 3)
+                x, y = [int(v) for v in q["corners"][0]]
+                cv2.putText(frame, role.upper(), (x, max(20, y - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (60, 220, 60), 2)
     if isinstance(ex, EE.PlateTapping) and ex.targets:
         for side, (x, y, r) in ex.targets.items():
             colour = (0, 220, 0) if side == ex.next_side else (120, 120, 120)
@@ -497,15 +536,16 @@ def _frames():
                 break
 
             now = time.time()
-            res = None
+            res, mask = None, None
             if ACTIVE.pose is not None:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                res = ACTIVE.pose.process(rgb).pose_landmarks
+                res, mask = ACTIVE.pose.process(frame, now)
             if now - ACTIVE.started < COUNTDOWN:
                 ex.feedback = f"Get ready… {int(COUNTDOWN - (now - ACTIVE.started)) + 1}"
             else:
                 pose = EE.Pose.from_mediapipe(res, frame.shape[1], frame.shape[0]) if res is not None else None
                 ex.update(pose, now)
+                if getattr(ex, "needs_frames", False):       # height: measured on the picture itself
+                    ex.feed_frame(frame, res, mask, now)
                 if (isinstance(ex, EE.DumbbellCurls) and ex.load_kg and ex.load_check is None and pose is not None
                         and pose.vis(EE.L_WRIST, EE.R_WRIST, EE.L_ELBOW, EE.R_ELBOW)):
                     ex.load_check = {"method": "sam-3.1", "seen": None, "reason": "checking"}
@@ -850,3 +890,45 @@ def qr_svg():
     # make_qr = always a normal QR code (phones can't read "Micro QR")
     segno.make_qr(data, error="m").save(buf, kind="svg", scale=6, border=2)
     return Response(buf.getvalue(), mimetype="image/svg+xml")
+
+
+# ------------------------------------------------------------------ height marker + reading numbers off photos
+
+@exercise_bp.route("/height/marker")
+def height_marker():
+    """The two printable DeepFit height sheets (FLOOR + TOP, 16 cm codes). Print at 100 % / 'actual size'."""
+    import stature
+    return render_template("height_marker.html", svg_floor=stature.marker_svg("floor"), svg_top=stature.marker_svg("top"),
+                           size_cm=stature.MARKER_CM, gap_cm=stature.MARKER_GAP_CM)
+
+
+def _photo_from_request() -> Optional[bytes]:
+    import vision_reader
+    if request.files.get("photo"):
+        data = request.files["photo"].read()
+        return data if 100 < len(data) < 12 * 1024 * 1024 else None
+    return vision_reader.decode_b64_image((request.get_json(silent=True) or {}).get("photo"))
+
+
+@exercise_bp.route("/api/vision/scale", methods=["POST"])
+def vision_scale():
+    """Photo of the bathroom-scale display -> the weight on it (read by the vision model)."""
+    import vision_reader
+    if current_athlete() is None:
+        return jsonify({"ok": False, "error": "Please log in first."}), 401
+    photo = _photo_from_request()
+    if photo is None:
+        return jsonify({"ok": False, "error": "No photo received."}), 400
+    return jsonify(vision_reader.read_scale(photo))
+
+
+@exercise_bp.route("/api/dumbbell/detect", methods=["POST"])
+def dumbbell_detect():
+    """Photo of the dumbbell -> its weight (number read off it, or an estimate the athlete confirms)."""
+    import vision_reader
+    if current_athlete() is None:
+        return jsonify({"ok": False, "error": "Please log in first."}), 401
+    photo = _photo_from_request()
+    if photo is None:
+        return jsonify({"ok": False, "error": "No photo received."}), 400
+    return jsonify(vision_reader.read_dumbbell(photo))

@@ -33,8 +33,9 @@ class TestRunScreen extends StatefulWidget {
   final bool front;
   final Map<String, double>? growthInputs;
   final double? loadKg;                    // dumbbell curls: weight in each hand
+  final Map<String, dynamic>? loadDetect;  // how that weight was found (read off the dumbbell / estimated / picked)
   const TestRunScreen(
-      {super.key, required this.info, required this.mode, required this.front, this.growthInputs, this.loadKg});
+      {super.key, required this.info, required this.mode, required this.front, this.growthInputs, this.loadKg, this.loadDetect});
   @override
   State<TestRunScreen> createState() => _TestRunScreenState();
 }
@@ -441,6 +442,7 @@ class _TestRunScreenState extends State<TestRunScreen> with WidgetsBindingObserv
       },
       if (ex is GrowthMeasures) 'inputs': widget.growthInputs,
       if (widget.loadKg != null) 'load_kg': widget.loadKg,
+      if (widget.loadKg != null && widget.loadDetect != null) 'load_detect': widget.loadDetect,
       if (ex is CoachabilityChallenge) 'pattern': ex.pattern,
       if (ex is CoachabilityChallenge) 'pattern_code': ex.code,
     };

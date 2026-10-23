@@ -86,6 +86,23 @@
         .inputs-row { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .6rem; }
         .inputs-row label { display: flex; flex-direction: column; font-size: .85rem; color: #cbd5e1; gap: .2rem; }
         .inputs-row input { width: 110px; padding: .45rem .5rem; border-radius: 8px; border: 1px solid #334155; background: #0b1b33; color: #fff; }
+        .detect-btn { min-height: 46px; padding: 0 18px; border-radius: 12px; border: 0; cursor: pointer; font-weight: 800; font-size: 1rem;
+                      background: linear-gradient(135deg, #22d3ee, #6366f1); color: #fff; box-shadow: 0 6px 20px rgba(99,102,241,.35); }
+        .detect-btn:disabled { opacity: .6; cursor: wait; }
+        .detected { margin-top: 8px; padding: 8px 12px; border-radius: 12px; background: #0f172a; border: 1px solid #334155; font-weight: 600; display: none; }
+        .detected.ok { display: block; border-color: #22c55e; color: #bbf7d0; } .detected.warn { display: block; border-color: #f59e0b; color: #fde68a; }
+        .detected.bad { display: block; border-color: #ef4444; color: #fecaca; }
+        .or-pick { margin: .6rem 0 0; color: #94a3b8; font-size: .85rem; }
+        .hw-steps { margin: .5rem 0 0; padding-left: 1.2rem; color: #cbd5e1; font-size: .9rem; } .hw-steps li { margin: .2rem 0; }
+        .hw-live { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .hw-live span { background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 4px 10px; font-weight: 700; }
+        .hw-live .ok { color: #4ade80; } .hw-live .bad { color: #fbbf24; }
+        #snap { position: fixed; inset: 0; background: rgba(2,6,23,.85); display: none; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
+        #snap.open { display: flex; }
+        #snap .snap-card { background: #0b1220; border: 1px solid #334155; border-radius: 18px; padding: 16px; width: min(560px, 100%); }
+        #snap video, #snap img { width: 100%; border-radius: 12px; background: #000; max-height: 50vh; object-fit: contain; }
+        #snap .snap-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        #snap .snap-actions > * { flex: 1 1 auto; text-align: center; }
         .height-row input { width: 90px; padding: .35rem .5rem; border-radius: 8px; border: 1px solid #334155;
                             background: #0b1b33; color: #fff; }
     </style>
@@ -165,6 +182,10 @@
                 {% if ex.key == 'dumbbell_curls' %}
                 <section aria-label="Dumbbell weight" style="margin-top:1rem" class="load-box">
                     <h3 style="margin:0;font-size:1rem">🏋️ Dumbbell weight (each hand)</h3>
+                    <p style="margin:.3rem 0 .5rem;color:#cbd5e1;font-size:.9rem">Show the dumbbell to the camera with the number ("5 KG") facing it - DeepFit reads the weight.</p>
+                    <button type="button" id="detect-load" class="detect-btn">📷 Detect my dumbbell</button>
+                    <div id="load-detected" class="detected" role="status"></div>
+                    <p class="or-pick">No number on it, or a water bottle? Pick it:</p>
                     <div class="load-picks" role="group" aria-label="Pick the dumbbell weight">
                         {% for kg in [0, 1, 2, 3, 5, 7.5, 10] %}
                         <button type="button" class="load-pick{{ ' on' if kg == 0 }}" data-kg="{{ kg }}">{{ 'No weight / bottle' if kg == 0 else ('%g kg' % kg) }}</button>
@@ -172,10 +193,31 @@
                         <label for="in-load" style="display:inline-flex;align-items:center;gap:6px">Other
                             <input id="in-load" type="number" min="0" max="60" step="0.5" value="0" style="width:80px"> kg</label>
                     </div>
-                    <p style="margin:.4rem 0 0;color:#94a3b8;font-size:.85rem">The camera can't read the number on a dumbbell, so pick it here.
-                        It then measures how the weight moved - elbow angle, lifting speed, body swing - and estimates your strength (1-rep max).
-                        With the Meta API key, SAM 3.1 also checks that a dumbbell is really in your hand.</p>
+                    <p style="margin:.4rem 0 0;color:#94a3b8;font-size:.85rem">During the set the camera measures how the weight moved - elbow angle,
+                        lifting speed, body swing - estimates your strength (1-rep max), and checks the weight against the benchmark for your age group:
+                        a dumbbell that moves much faster or slower than that weight can was not the weight detected.</p>
                     <div id="load-live" class="load-live" aria-live="off"></div>
+                </section>
+                {% endif %}
+                {% if ex.key == 'height_weight' %}
+                <section aria-label="Height and weight setup" style="margin-top:1rem" class="load-box">
+                    <h3 style="margin:0;font-size:1rem">📏 Height - measured by the camera</h3>
+                    <ol class="hw-steps">
+                        <li><a href="/height/marker" target="_blank" style="color:#67e8f9;font-weight:700">Print the two DeepFit sheets</a> (FLOOR + TOP, at 100 %) - or use two plain A4 sheets on a darker wall.</li>
+                        <li><b>FLOOR</b> sheet: cut on the dashed line, stand it on the floor against the wall, tape it flat.</li>
+                        <li><b>TOP</b> sheet: tape it on the same wall anywhere above your head, a bit to the side - no measuring.</li>
+                        <li>Stand next to the floor sheet: no shoes or cap, heels, back and head on the wall, hair flat.</li>
+                        <li>Camera 2-3 m away at chest height - both sheets, your head and your feet in view.</li>
+                    </ol>
+                    <p style="margin:.4rem 0 0;color:#94a3b8;font-size:.85rem">Why two sheets: one sheet can't tell how much the camera is tilted
+                        (2° of tilt = 4 cm wrong). With both, tilt is measured and removed. Expected accuracy ≈ ±1 cm.</p>
+                    <h3 style="margin:.9rem 0 0;font-size:1rem">⚖️ Weight - from your scale</h3>
+                    <div class="inputs-row" style="align-items:flex-end">
+                        <button type="button" id="read-scale" class="detect-btn">📷 Read my scale</button>
+                        <label for="in-hw-weight">or type it (kg)<input id="in-hw-weight" type="number" min="10" max="250" step="0.1" placeholder="e.g. 42.5"></label>
+                    </div>
+                    <div id="scale-read" class="detected" role="status"></div>
+                    <div id="hw-live" class="hw-live" aria-live="off"></div>
                 </section>
                 {% endif %}
                 {% if ex.key == 'growth_measures' %}
@@ -268,6 +310,22 @@
         </div>
     </div>
 
+    <div id="snap" role="dialog" aria-modal="true" aria-labelledby="snap-title">
+        <div class="snap-card">
+            <h3 id="snap-title" style="margin:0 0 .3rem"></h3>
+            <p id="snap-hint" style="margin:0 0 .6rem;color:#94a3b8;font-size:.9rem"></p>
+            <video id="snap-video" autoplay playsinline muted></video>
+            <img id="snap-img" alt="Photo taken" style="display:none">
+            <div class="snap-actions">
+                <button type="button" id="snap-take" class="btn btn-primary">📸 Take photo</button>
+                <label class="btn btn-secondary" for="snap-file" style="cursor:pointer">🖼️ Upload a photo</label>
+                <input id="snap-file" type="file" accept="image/*" capture="environment" style="display:none">
+                <button type="button" id="snap-cancel" class="btn btn-secondary">Cancel</button>
+            </div>
+            <p id="snap-status" role="status" style="margin:.6rem 0 0;font-weight:700"></p>
+        </div>
+    </div>
+
     <div id="sr-live" class="sr-only" aria-live="assertive"></div>
 
     <script>
@@ -281,6 +339,6 @@
         };
     </script>
     {% include 'partials/verify_view.html' %}
-    <script src="{{ url_for('static', filename='js/exercise_page.js', v='3') }}"></script>
+    <script src="{{ url_for('static', filename='js/exercise_page.js', v='4') }}"></script>
 </body>
 </html>

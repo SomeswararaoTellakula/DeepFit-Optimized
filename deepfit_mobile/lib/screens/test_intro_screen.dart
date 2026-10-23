@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../services/api.dart';
 import '../services/app_state.dart';
 import '../services/speech.dart';
 import '../widgets/common.dart';
 import 'height_weight_screen.dart';
 import 'lr_check_screen.dart';
+import 'photo_capture_screen.dart';
 import 'stopwatch_screen.dart';
 import 'test_run_screen.dart';
 
@@ -23,6 +25,9 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
   final _weight = TextEditingController();
   final _chair = TextEditingController(text: '45');
   double _loadKg = 0;                       // dumbbell curls: weight in each hand (0 = no weight / bottle)
+  Map<String, dynamic>? _loadDetect;        // how the weight was found (read off the dumbbell / estimated)
+  String? _detectNote;
+  bool _detecting = false;
   bool _spoke = false;
 
   @override
@@ -48,6 +53,37 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
     return parts.where((s) => s.trim().isNotEmpty).join('. ');
   }
 
+  Future<void> _detectDumbbell() async {
+    final state = AppScope.read(context);
+    final photos = await Navigator.of(context).push<List<String>>(MaterialPageRoute(
+        builder: (_) => const PhotoCaptureScreen(
+              title: 'Show your dumbbell',
+              hint: 'Hold the dumbbell close with the end that says "5 KG" (or similar) towards the camera, then take the photo.',
+              front: true,
+            )));
+    if (photos == null || photos.isEmpty || !mounted) return;
+    setState(() => _detecting = true);
+    try {
+      final r = await state.api.post('/dumbbell/detect', {'photo': photos.first}, timeout: const Duration(seconds: 60));
+      final kg = (r['kg'] as num).toDouble();
+      setState(() {
+        _loadKg = kg;
+        _loadDetect = {
+          'source': r['source'], 'kg': kg, 'label_text': r['label_text'], 'model': r['model'], 'sure': r['sure'],
+          'object': r['object'],
+        };
+        _detectNote = r['source'] == 'label'
+            ? '✓ Detected ${fmtValue(kg)} kg - read "${r['label_text'] ?? '${fmtValue(kg)} kg'}" on the ${r['object'] ?? 'dumbbell'}'
+            : '≈ ${fmtValue(kg)} kg - no number was readable, this is a guess from its look. Tap the right weight if it is wrong.';
+      });
+      _speech.say(r['source'] == 'label' ? 'Detected ${fmtValue(kg)} kilograms.' : 'About ${fmtValue(kg)} kilograms. Please check.');
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _detecting = false);
+    }
+  }
+
   void _start(TestInfo t) {
     final state = AppScope.read(context);
     _speech.stop();
@@ -67,8 +103,12 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
         }
         growth = {'height_cm': h, 'weight_kg': w, 'chair_cm': c};
       }
+      final load = t.key == 'dumbbell_curls' && _loadKg > 0 ? _loadKg : null;
+      final detect = load == null
+          ? null
+          : (_loadDetect != null && (_loadDetect!['kg'] as num).toDouble() == load ? _loadDetect : {'source': 'typed'});
       screen = TestRunScreen(info: t, mode: state.mode, front: state.frontCamera, growthInputs: growth,
-          loadKg: t.key == 'dumbbell_curls' && _loadKg > 0 ? _loadKg : null);
+          loadKg: load, loadDetect: detect);
     }
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => screen));
   }
@@ -152,8 +192,27 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
                   const SectionTitle('Dumbbell weight (each hand)'),
                   Panel(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          icon: const Icon(Icons.photo_camera),
+                          label: Text(_detecting ? 'Reading the dumbbell…' : 'Detect my dumbbell'),
+                          onPressed: _detecting ? null : _detectDumbbell,
+                        ),
+                      ),
+                      if (_detectNote != null) ...[
+                        const SizedBox(height: 8),
+                        Text(_detectNote!,
+                            style: TextStyle(
+                                color: _loadDetect?['source'] == 'label' ? DeepFitColors.green : DeepFitColors.amber,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                      const SizedBox(height: 10),
+                      const Text('No number on it, or a water bottle? Pick it:',
+                          style: TextStyle(color: DeepFitColors.muted, fontSize: 13)),
+                      const SizedBox(height: 6),
                       Wrap(spacing: 8, runSpacing: 6, children: [
-                        for (final kg in const [0.0, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0])
+                        for (final kg in {0.0, 1.0, 2.0, 3.0, 5.0, 7.5, 10.0, if (_loadKg > 0) _loadKg}.toList()..sort())
                           ChoiceChip(
                             label: Text(kg == 0 ? 'No weight / bottle' : '${fmtValue(kg)} kg'),
                             selected: _loadKg == kg,
@@ -162,8 +221,8 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
                       ]),
                       const SizedBox(height: 8),
                       const Text(
-                          'The camera can\'t read the number on a dumbbell, so pick it here. The server then measures how the '
-                          'weight moved - elbow angle, lifting speed, body swing - and estimates your strength (1-rep max).',
+                          'The server measures how the weight moved - elbow angle, lifting speed, body swing - estimates your '
+                          'strength (1-rep max) and checks the weight against the benchmark for your age group.',
                           style: TextStyle(color: DeepFitColors.muted, fontSize: 13)),
                     ]),
                   ),

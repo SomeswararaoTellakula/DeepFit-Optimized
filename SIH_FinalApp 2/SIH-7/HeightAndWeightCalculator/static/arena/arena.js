@@ -953,7 +953,7 @@ async function finishGame() {
     const r = await postJSON('/api/arena/coach', { raw, lang: S.lang, name: $('pname').value, age: $('page').value, plan_used: S.plan }, 70000);
     if (r.ok) {
       S.coach = r.coach; showProfile(r.profile);
-      $('coach-src').textContent = r.coach.source === 'muse-spark' ? 'Muse Spark' : 'offline coach';
+      $('coach-src').textContent = r.coach.source === 'muse-spark' ? (r.coach.model || 'Muse Spark') : 'offline coach';
       $('coach-story').textContent = r.coach.story; $('coach-focus').textContent = '🎯 ' + r.coach.focus;
       $('coach-parents').textContent = '👪 ' + r.coach.tip_for_parents;
       const ns = r.coach.next_session;
@@ -1241,12 +1241,14 @@ function frame(now) {
 
 function aiChips() {
   const parts = [`SAM ${S.ai.sam === 'yes' ? '✓' : '·'}`, `Spark ${S.ai.spark === 'yes' ? '✓' : '·'}`, `Voice ${S.ai.voice === 'yes' ? '✓' : '·'}`];
-  $('hud-ai').textContent = CFG.metaAvailable ? 'Meta AI: ' + parts.join(' ') : 'Meta AI: offline';
+  $('hud-ai').textContent = CFG.metaAvailable || CFG.aiAvailable ? 'AI: ' + parts.join(' ') : 'AI: offline';
 }
 setInterval(aiChips, 1000);
 fetch('/api/arena/status').then((r) => r.json()).then((d) => {
-  $('ai-status').textContent = d.meta_key ? `Meta Model API connected: ${Object.values(d.models).join(', ')}.` :
-    'Meta Model API key not set on the server - the game still works; the AI coach, SAM calibration, voice commands and poster use simple fallbacks.';
+  const chain = (d.ai && d.ai.chat_chain) || [];
+  $('ai-status').textContent = d.meta_key ? `AI connected: ${chain.join(' → ')}.` :
+    chain.length ? `AI coach and voice: ${chain.join(' → ')}. SAM calibration and the poster need the Meta API key.` :
+    'No AI key on the server - the game still works; the coach, calibration, voice commands and poster use simple fallbacks.';
 }).catch(() => {});
 
 // ------------------------------------------------------------------ title screen controls

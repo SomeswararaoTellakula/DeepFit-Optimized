@@ -132,14 +132,15 @@ def arena_page():
         "lang": request.args.get("lang") if request.args.get("lang") in LANGS else "en",
         "loggedIn": bool(ath), "name": (ath or {}).get("name") or "", "age": (ath or {}).get("age"),
         "gender": (ath or {}).get("gender"), "heightCm": height, "plan": _last_plan(ath),
-        "metaAvailable": meta_models.available(),
+        "metaAvailable": meta_models.available(), "aiAvailable": meta_models.ai_available(),
     }
     return render_template("arena.html", cfg=cfg, langs=LANGS)
 
 
 @arena_bp.route("/api/arena/status")
 def arena_status():
-    return jsonify({"meta_key": meta_models.available(), "last_errors": meta_models.last_error,
+    import llm
+    return jsonify({"meta_key": meta_models.available(), "ai": llm.status(), "last_errors": meta_models.last_error,
                     "models": {"chat": meta_models.CHAT_MODEL, "sam": meta_models.SAM_MODEL,
                                "asr": meta_models.ASR_MODEL, "image": meta_models.IMAGE_MODEL}})
 
@@ -166,7 +167,7 @@ def _intent(text: str, lang: str) -> str:
     for intent, words in INTENT_WORDS.items():
         if any(w in t for w in words):
             return intent
-    if t.strip() and meta_models.available():
+    if t.strip() and meta_models.ai_available():
         out = meta_models.chat_json(
             "You map a short spoken command from a fitness game to one intent. The player may speak "
             "English, Hindi or Telugu (or mix them).",
@@ -317,7 +318,8 @@ def arena_coach():
     else:
         ns = out["next_session"]
         out["next_session"] = {**_clamp_plan(ns), "reason": str(ns.get("reason", ""))[:300]}
-        out["source"] = "muse-spark"
+        import llm
+        out["source"], out["model"] = "muse-spark", llm.last_used.get("chat")
         res = out
     return jsonify({"ok": True, "coach": res, "profile": prof, "points": arena_score.points(d.get("raw"))})
 
@@ -371,7 +373,7 @@ def arena_save():
         "raw": raw, "raw_hash": hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest(),
         "profile": prof,
         "points": arena_score.points(raw), "points_total": arena_score.points(raw)["total"],
-        "coach": {k: coach.get(k) for k in ("story", "strengths", "focus", "tip_for_parents", "source") if k in coach},
+        "coach": {k: coach.get(k) for k in ("story", "strengths", "focus", "tip_for_parents", "source", "model") if k in coach},
         "next_plan": _clamp_plan((coach.get("next_session") if coach else None) or d.get("plan_used")),
     }
     sig = passport.sign(_payload(doc))

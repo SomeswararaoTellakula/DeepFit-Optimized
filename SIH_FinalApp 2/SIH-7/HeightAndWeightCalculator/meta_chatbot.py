@@ -1,7 +1,8 @@
 """
-DeepFit AI Coach - powered by Meta's Muse Spark through the Meta Model API.
+DeepFit AI Coach - powered by Meta's Muse Spark through the Meta Model API, with automatic
+fallback to Groq (Meta's Muse Spark open weights, then Llama 3.3 70B) - see llm.py.
 
-* Chat Completions endpoint: https://api.meta.ai/v1/chat/completions
+* Chat Completions endpoint: https://api.meta.ai/v1/chat/completions (Groq: OpenAI-compatible)
 * Function calling: the coach can read the logged-in athlete's own DeepFit data
   (profile, history, progress, benchmark comparison, exercise guides) using the
   tools in deepfit_tools.py - the same tools exposed over MCP by deepfit_mcp_server.py.
@@ -9,6 +10,7 @@ DeepFit AI Coach - powered by Meta's Muse Spark through the Meta Model API.
 
 Settings (.env):
     MODEL_API_KEY=...            Meta Model API key (META_API_KEY also accepted)
+    GROQ_API_KEY=...             fallback provider (used when Meta has no credits / is unreachable)
     META_MODEL=muse-spark-1.3    model id
     META_REASONING_EFFORT=low    low | medium | high  (Muse Spark always reasons)
 """
@@ -65,51 +67,26 @@ class MetaAPIError(Exception):
 class MetaChatbot:
     """Drop-in replacement for the old GeminiChatbot (same public methods)."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
-        if not api_key:
-            raise ValueError("MODEL_API_KEY is not set")
-        self.api_key = api_key
+    def __init__(self, api_key: Optional[str] = None, model: str = DEFAULT_MODEL):
+        import llm
+        if not llm.configured():
+            raise ValueError("No AI key set (MODEL_API_KEY or GROQ_API_KEY)")
         self.model = model
         self.history: List[Dict] = []
-        self.http = requests.Session()
-        self.http.headers.update({
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        })
-        self._send_reasoning = bool(REASONING_EFFORT)
+        self.last_label: Optional[str] = None
 
     # ------------------------------------------------------------ API call
     def _post(self, messages: List[Dict], use_tools: bool = True) -> Dict:
-        body = {"model": self.model, "messages": messages}
-        if use_tools:
-            body["tools"] = openai_tool_specs()
-            body["tool_choice"] = "auto"
-        if self._send_reasoning:
-            body["reasoning_effort"] = REASONING_EFFORT
-
-        for attempt in range(3):
-            try:
-                r = self.http.post(f"{API_BASE}/chat/completions", json=body, timeout=90)
-            except requests.RequestException as e:
-                if attempt == 2:
-                    raise MetaAPIError(f"Could not reach Meta Model API: {e}")
-                time.sleep(1.5 * (attempt + 1))
-                continue
-
-            if r.status_code == 200:
-                return r.json()
-            text = r.text[:500]
-            # If this model rejects reasoning_effort, retry once without it
-            if r.status_code == 400 and "reasoning" in text.lower() and "reasoning_effort" in body:
-                logger.warning("reasoning_effort rejected, retrying without it")
-                self._send_reasoning = False
-                body.pop("reasoning_effort", None)
-                continue
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
-                time.sleep(2 * (attempt + 1))
-                continue
-            raise MetaAPIError(f"HTTP {r.status_code}: {text}")
-        raise MetaAPIError("Meta Model API did not respond")
+        """One completion: Meta Muse Spark first, then the Groq fallbacks (llm.py)."""
+        import llm
+        vision = any(isinstance(m.get("content"), list) and any(p.get("type") == "image_url" for p in m["content"])
+                     for m in messages)
+        try:
+            res = llm.complete(messages, tools=openai_tool_specs() if use_tools else None, vision=vision, timeout=90)
+        except llm.LLMError as e:
+            raise MetaAPIError(str(e))
+        self.last_label = res["label"]
+        return {"choices": [{"message": res["message"]}]}
 
     # --------------------------------------------------------- main loop
     def _run(self, user_content, ctx: Optional[AthleteContext]) -> str:
@@ -219,12 +196,20 @@ class MetaChatbot:
 
     @staticmethod
     def _friendly_error(err: str) -> str:
+        import llm
         e = err.lower()
+        if "no ai key" in e:
+            return "The AI Coach has no API key yet. Add MODEL_API_KEY (Meta) or GROQ_API_KEY to the .env file and restart."
+        if llm.groq_key() and "groq" in e:
+            if "401" in e.split("groq", 1)[1][:200]:
+                return "The AI Coach couldn't use the Groq key (rejected). Please check GROQ_API_KEY in .env."
+            return ("Both AI services are unavailable right now (Meta: " + ("no credits" if "402" in e else "error") +
+                    ", Groq: busy or unreachable). Please try again in a minute.")
         if "401" in e or "unauthorized" in e or "invalid api key" in e:
             return "The AI Coach isn't configured correctly (API key rejected). Please check MODEL_API_KEY."
         if "402" in e or "billing" in e:
             return ("The AI Coach is set up, but the Meta Model API account has no billing / credits yet. "
-                    "Add a payment method or hackathon credits in the Meta developer console, then try again.")
+                    "Add credits in the Meta developer console - or add GROQ_API_KEY to .env to use the free fallback.")
         if "403" in e:
             return "The AI Coach doesn't have access to this model. Please check the Meta Model API account."
         if "429" in e:

@@ -54,32 +54,26 @@ def _fail(kind: str, msg: str) -> None:
 
 # ------------------------------------------------------------------ Muse Spark (structured JSON)
 
+def ai_available() -> bool:
+    """A text model is reachable: Meta (Muse Spark) or the Groq fallback (Muse Spark open / Llama)."""
+    import llm
+    return llm.configured()
+
+
 def chat_json(system: str, user: str, schema: Dict[str, Any], name: str = "result",
               timeout: float = 45.0) -> Optional[Dict[str, Any]]:
-    """Ask Muse Spark for JSON that matches `schema`."""
-    if not available():
-        _fail("chat", "MODEL_API_KEY is not set")
+    """JSON that matches `schema`: Muse Spark on the Meta API, falling back to Groq (see llm.py)."""
+    import llm
+    if not llm.configured():
+        _fail("chat", "no AI key set (MODEL_API_KEY or GROQ_API_KEY)")
         return None
-    body = {
-        "model": CHAT_MODEL,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
-    }
-    try:
-        r = requests.post(f"{API_BASE}/chat/completions", headers=_headers(), json=body, timeout=timeout)
-        if r.status_code >= 400:
-            _fail("chat", f"HTTP {r.status_code}: {r.text[:200]}")
-            return None
-        content = r.json()["choices"][0]["message"]["content"]
-        if isinstance(content, list):          # some servers return content parts
-            content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
-        m = re.search(r"\{.*\}", content, re.S)  # tolerate text around the JSON
-        out = json.loads(m.group(0) if m else content)
-        last_error["chat"] = None
-        return out if isinstance(out, dict) else None
-    except Exception as e:  # network, JSON, unexpected shape
-        _fail("chat", repr(e))
+    out = llm.json_answer(system, user, schema, name=name, timeout=timeout)
+    if out is None:
+        _fail("chat", (llm.last_errors[-1] if llm.last_errors else "no answer"))
         return None
+    last_error["chat"] = None
+    out.pop("_model", None)
+    return out
 
 
 # ------------------------------------------------------------------ SAM 3.1 (boxes for a text prompt)
@@ -153,6 +147,17 @@ LANG_NAMES = {"en": "English", "hi": "Hindi", "te": "Telugu", "ta": "Tamil", "kn
 
 
 def transcribe(wav_bytes: bytes, langs: Optional[List[str]] = None, timeout: float = 30.0) -> Optional[str]:
+    """Transcript of a short WAV clip: Muse Voice Transcribe, falling back to Whisper on Groq."""
+    text = _meta_transcribe(wav_bytes, langs, timeout)
+    if text is None:
+        import llm
+        text = llm.groq_transcribe(wav_bytes, (langs or [None])[0], timeout)
+        if text is not None:
+            last_error["asr"] = None
+    return text
+
+
+def _meta_transcribe(wav_bytes: bytes, langs: Optional[List[str]] = None, timeout: float = 30.0) -> Optional[str]:
     """Transcript of a short WAV clip (mono 16-bit PCM, 16 or 24 kHz), or None."""
     if not available():
         _fail("asr", "MODEL_API_KEY is not set")

@@ -188,7 +188,13 @@ class PoseVision {
 int _byte(int v) => v < 0 ? 0 : (v > 255 ? 255 : v);
 
 /// Runs in a background isolate: camera frame -> upright JPEG (max 640 px) for the face check.
-Uint8List encodeJpegFrame(RawFrame f) {
+/// Small JPEG (max 640 px) for face checks and snapshots.
+Uint8List encodeJpegFrame(RawFrame f) => _encodeJpeg(f, 640, 80);
+
+/// Sharp JPEG (max 1920 px) for measuring photos: height sheets, scale display, dumbbell number.
+Uint8List encodeJpegFrameLarge(RawFrame f) => _encodeJpeg(f, 1920, 90);
+
+Uint8List _encodeJpeg(RawFrame f, int maxSide, int quality) {
   final w = f.width, h = f.height;
   final rgb = Uint8List(w * h * 3);
   final b = f.bytes;
@@ -223,6 +229,6 @@ Uint8List encodeJpegFrame(RawFrame f) {
   var im = img.Image.fromBytes(width: w, height: h, bytes: rgb.buffer, numChannels: 3);
   if (f.rotation != 0) im = img.copyRotate(im, angle: f.rotation);
   final longSide = math.max(im.width, im.height);
-  if (longSide > 640) im = img.copyResize(im, width: (im.width * 640 / longSide).round());
-  return Uint8List.fromList(img.encodeJpg(im, quality: 80));
+  if (longSide > maxSide) im = img.copyResize(im, width: (im.width * maxSide / longSide).round());
+  return Uint8List.fromList(img.encodeJpg(im, quality: quality));
 }

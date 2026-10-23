@@ -12,6 +12,7 @@ import re
 import traceback
 import uuid
 
+from bson import ObjectId
 from flask import Blueprint, jsonify, render_template, request, session
 from werkzeug.utils import secure_filename
 
@@ -31,9 +32,14 @@ def _meta_key():
     return os.environ.get("MODEL_API_KEY") or os.environ.get("META_API_KEY")
 
 
-def provider_name():
-    if _meta_key():
-        return f"Meta {os.environ.get('META_MODEL', 'muse-spark-1.3')}"
+def provider_name(bot=None):
+    """The model that answered last (or the chain that will be tried)."""
+    if bot is not None and getattr(bot, 'last_label', None):
+        return bot.last_label
+    import llm
+    chain = [r['label'] for r in llm.routes('chat')]
+    if chain:
+        return chain[0] + (' (+ fallback)' if len(chain) > 1 else '')
     if os.environ.get("GEMINI_API_KEY"):
         return "Gemini"
     return "not configured"
@@ -58,14 +64,15 @@ def get_chatbot(key):
     if key not in chatbot_instances:
         if len(chatbot_instances) >= MAX_INSTANCES:
             chatbot_instances.pop(next(iter(chatbot_instances)))
-        if _meta_key():
+        import llm
+        if llm.configured():
             from meta_chatbot import MetaChatbot
-            chatbot_instances[key] = MetaChatbot(_meta_key())
+            chatbot_instances[key] = MetaChatbot()
         elif os.environ.get("GEMINI_API_KEY"):
             from gemini_chatbot import GeminiChatbot
             chatbot_instances[key] = GeminiChatbot(os.environ["GEMINI_API_KEY"])
         else:
-            raise RuntimeError("No AI provider configured. Set MODEL_API_KEY in .env")
+            raise RuntimeError("No AI provider configured. Set MODEL_API_KEY or GROQ_API_KEY in .env")
     return chatbot_instances[key]
 
 
@@ -120,13 +127,22 @@ def render_markdown_safe(text):
     return re.sub(r'(<br>)+$', '', result)
 
 
-def _reply(text):
-    return jsonify({'response': text, 'response_html': render_markdown_safe(text), 'provider': provider_name()})
+def _reply(text, bot=None):
+    return jsonify({'response': text, 'response_html': render_markdown_safe(text), 'provider': provider_name(bot)})
 
 
 @chatbot_bp.route('/api/chatbot/status')
 def chatbot_status():
-    return jsonify({'provider': provider_name(), 'logged_in': bool(session.get('user_id'))})
+    import llm
+    name = None
+    if session.get('user_id'):
+        try:
+            u = get_db().users.find_one({'_id': ObjectId(session['user_id'])})
+            name = (u or {}).get('name')
+        except Exception:
+            name = None
+    return jsonify({'provider': provider_name(chatbot_instances.get(_chat_key())), 'logged_in': bool(session.get('user_id')),
+                    'name': (name or '').split(' ')[0] or None, 'chain': [r['label'] for r in llm.routes('chat')]})
 
 
 @chatbot_bp.route('/api/chatbot/message', methods=['POST'])
@@ -139,7 +155,7 @@ def send_message():
         if len(message) > 4000:
             message = message[:4000]
         bot = get_chatbot(_chat_key())
-        return _reply(_ask(bot, 'send_message', message))
+        return _reply(_ask(bot, 'send_message', message), bot)
     except Exception as e:
         print(f"Error in send_message: {e}")
         print(traceback.format_exc())
@@ -159,7 +175,7 @@ def send_image():
         if len(image_data) > 10 * 1024 * 1024:
             return jsonify({'error': 'Image too large (max 10 MB)'}), 400
         bot = get_chatbot(_chat_key())
-        return _reply(_ask(bot, 'send_message_with_image', message, image_data))
+        return _reply(_ask(bot, 'send_message_with_image', message, image_data), bot)
     except Exception as e:
         print(f"Error in send_image: {e}")
         print(traceback.format_exc())
@@ -186,7 +202,7 @@ def send_file():
                 os.remove(filepath)
             except OSError:
                 pass
-        return _reply(response)
+        return _reply(response, bot)
     except Exception as e:
         print(f"Error in send_file: {e}")
         print(traceback.format_exc())

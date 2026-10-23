@@ -227,7 +227,14 @@ class _ResultScreenState extends State<ResultScreen> {
         ? 'dumbbell seen by SAM 3.1'
         : check['seen'] == false
             ? 'SAM 3.1 did not see a dumbbell'
-            : 'declared by you';
+            : 'not checked';
+    final det = (r['load_detect'] as Map?)?.cast<String, dynamic>() ?? const {};
+    final found = det['source'] == 'label'
+        ? 'read "${det['label_text'] ?? '${fmtValue(r['load_kg'])} kg'}" on it'
+        : det['source'] == 'estimate'
+            ? 'estimated, confirmed by you'
+            : 'picked by you';
+    final wc = (b?['weight_check'] as Map?)?.cast<String, dynamic>();
     final reps = (r['reps_detail'] as List?) ?? const [];
     double maxV = 0.1;
     for (final x in reps) {
@@ -251,7 +258,17 @@ class _ResultScreenState extends State<ResultScreen> {
         row('Body swing / elbow drift', '${fmtValue(a['mean_swing_pct'])}% / ${fmtValue(a['mean_drift_pct'])}%'),
         row('Estimated 1-rep max (each arm)', a['est_1rm_kg'] == null ? '-' : '≈ ${fmtValue(a['est_1rm_kg'])} kg'),
         if (a['next_load_kg'] != null) row('Next time try', '${fmtValue(a['next_load_kg'])} kg'),
-        row('Weight check', seen),
+        row('Weight found', found),
+        row('Dumbbell in the hand', seen),
+        if (wc != null && wc['text'] != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text('${wc['ok'] == false ? '⚠ ' : wc['ok'] == true ? '✓ ' : ''}${wc['text']}',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: wc['ok'] == false ? DeepFitColors.amber : DeepFitColors.green)),
+          ),
         if (b != null && b['target'] != null && (b['target'] as num) > 1)
           row('Target with ${fmtValue(b['benchmark_load_kg'])} kg', '≥ ${fmtValue(b['target'])} clean reps'),
         if (reps.isNotEmpty) ...[

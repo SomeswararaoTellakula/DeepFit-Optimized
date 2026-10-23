@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepFit Height Sheets</title>
+    <style>
+        @page { size: A4 portrait; margin: 10mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #111; background: #e5e7eb; }
+        .bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 12px 16px; }
+        .bar button, .bar a { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid #111; background: #111; color: #fff;
+                              text-decoration: none; cursor: pointer; }
+        .bar a { background: #fff; color: #111; }
+        .help { max-width: 720px; margin: 0 auto 12px; padding: 0 16px; font-size: 14px; line-height: 1.5; }
+        .page { background: #fff; width: 190mm; min-height: 277mm; margin: 0 auto 16px; padding: 8mm 0 0; position: relative;
+                display: flex; flex-direction: column; align-items: center; box-shadow: 0 2px 12px rgba(0,0,0,.15); }
+        .page + .page { page-break-before: always; break-before: page; }
+        .label { font-size: 26px; font-weight: 900; letter-spacing: .04em; }
+        .sub { font-size: 12px; color: #333; text-align: center; max-width: 160mm; margin: 2mm 0 6mm; }
+        .code { width: {{ size_cm }}cm; height: {{ size_cm }}cm; }
+        .code svg { width: 100%; height: 100%; display: block; }
+        .ruler { width: 10cm; height: 7mm; border: 1px solid #000; border-top: 0; margin: 6mm 0 2mm;
+                 background: repeating-linear-gradient(90deg, #000 0 0.3mm, transparent 0.3mm 1cm); }
+        .ruler-txt { font-size: 11px; }
+        .cut { position: absolute; left: 0; right: 0; border-top: 2px dashed #111; }
+        .cut span { position: absolute; left: 50%; transform: translate(-50%, -60%); background: #fff; padding: 0 6px; font-size: 12px; font-weight: 700; }
+        @media print { body { background: #fff; } .bar, .help { display: none; } .page { box-shadow: none; margin: 0; width: auto; min-height: 0; } }
+        @media (max-width: 760px) { .page { transform-origin: top center; } }
+    </style>
+</head>
+<body>
+    <div class="bar"><button onclick="window.print()">🖨️ Print both sheets (100 % / actual size)</button><a href="/ex/height_weight">← Back to the test</a></div>
+    <div class="help">
+        <b>Print at 100 %</b> ("actual size" - not "fit to page"), then check with a ruler: the black square must be exactly
+        {{ size_cm|round(1) }} cm and the ruler line 10 cm. A 3 % smaller print makes everyone 5 cm shorter.
+        No printer? Use two plain A4 sheets instead (the wall must be darker than the paper).
+    </div>
+
+    <div class="page">
+        <div class="label">TOP</div>
+        <p class="sub">Tape flat on the wall anywhere above the head of the tallest athlete, a little to the side. No measuring needed.</p>
+        <div class="code">{{ svg_top|safe }}</div>
+        <div class="ruler"></div><div class="ruler-txt">this line must measure 10 cm</div>
+    </div>
+
+    <div class="page">
+        <div class="label">FLOOR</div>
+        <p class="sub">Cut along the dashed line, stand the sheet on the floor against the wall (cut edge down) and tape it flat.
+            The athlete stands right next to it with heels against the wall.</p>
+        <div class="ruler" style="margin-top:0"></div><div class="ruler-txt" style="margin-bottom:6mm">this line must measure 10 cm</div>
+        <div class="code" id="floor-code">{{ svg_floor|safe }}</div>
+        <div class="cut" style="top: calc(var(--code-bottom, 0px) + {{ gap_cm }}cm)"><span>✂ cut here - exactly {{ gap_cm|round(0)|int }} cm under the code</span></div>
+    </div>
+
+    <script>
+        // place the cut line exactly gap_cm below the floor code (works on screen and in print)
+        function placeCut() {
+            const page = document.querySelectorAll('.page')[1], code = document.getElementById('floor-code');
+            page.style.setProperty('--code-bottom', (code.offsetTop + code.offsetHeight) + 'px');
+        }
+        placeCut(); window.addEventListener('resize', placeCut); window.addEventListener('beforeprint', placeCut);
+    </script>
+</body>
+</html>

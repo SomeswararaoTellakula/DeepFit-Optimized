@@ -199,18 +199,27 @@ def get_db():
     return None
 
 # Import and register blueprints after CORS setup
-from situp_blueprint import situp_bp
-from vertical_jump_blueprint import vertical_jump_bp
-from dumbbell_blueprint import dumbbell_bp
+# The three original test pages use the old MediaPipe API (mp.solutions), which new MediaPipe
+# releases (the only ones for the newest Python) no longer have. If they can't load, the site still
+# starts and their addresses open the same test in the shared engine (which works with every version).
+from flask import Blueprint as _Blueprint
+LEGACY_MISSING = set()
+for _mod, _bp_name, _prefix, _engine_key in (("situp_blueprint", "situp_bp", "/situp", "situps"),
+                                             ("vertical_jump_blueprint", "vertical_jump_bp", "/vertical_jump", "vertical_jump"),
+                                             ("dumbbell_blueprint", "dumbbell_bp", "/dumbbell", "dumbbell_curls")):
+    try:
+        app.register_blueprint(getattr(__import__(_mod), _bp_name), url_prefix=_prefix)
+    except Exception as _e:
+        LEGACY_MISSING.add(_engine_key)
+        print(f"[DeepFit] {_mod} not loaded ({type(_e).__name__}: {_e}) - {_prefix} now opens /ex/{_engine_key}")
+        _fallback = _Blueprint(_bp_name, __name__)
+        _fallback.add_url_rule("/", _bp_name + "_home", (lambda k=_engine_key: redirect(f"/ex/{k}")))
+        _fallback.add_url_rule("/<path:_rest>", _bp_name + "_any", (lambda _rest=None, k=_engine_key: redirect(f"/ex/{k}")))
+        app.register_blueprint(_fallback, url_prefix=_prefix)
 from benchmark_routes import benchmark_bp
 from chatbot_routes import chatbot_bp
-from height_blueprint import height_bp
-app.register_blueprint(situp_bp, url_prefix='/situp')
-app.register_blueprint(vertical_jump_bp, url_prefix='/vertical_jump')
-app.register_blueprint(dumbbell_bp, url_prefix='/dumbbell')
 app.register_blueprint(benchmark_bp)
 app.register_blueprint(chatbot_bp)
-app.register_blueprint(height_bp, url_prefix='/height')
 # All other camera tests (push-ups, plank, flamingo balance, ...) share one engine
 from exercise_blueprint import exercise_bp
 app.register_blueprint(exercise_bp)
@@ -331,9 +340,8 @@ def serve_background():
 
 @app.route('/height')
 def height():
-    if not session or 'user_id' not in session:
-        return redirect(url_for('login'))
-    return render_template('height.html')
+    """Height & Weight is now a normal camera test (stature.py) - no separate program."""
+    return redirect('/ex/height_weight')
 
 @app.route('/verification')
 def verification():
@@ -848,87 +856,12 @@ def fitnesstwo():
     return render_template('index.html')
 
 @app.route('/height_detection')
-def height_detection():
-    """Route to start height detection system"""
-    try:
-        # Get user email from session
-        user_email = None
-        if session and 'user_id' in session:
-            user = db.users.find_one({'_id': ObjectId(session['user_id'])})
-            if user:
-                user_email = user.get('email')
-        
-        # Import and run the integrated system
-        import subprocess
-        import sys
-        
-        # Prepare command with user email if available
-        cmd = [sys.executable, 'integrated_system.py']
-        if user_email:
-            cmd.append(user_email)
-        
-        subprocess.Popen(cmd, 
-                        cwd=os.getcwd(), 
-                        creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-        
-        return jsonify({'status': True, 'message': 'Height detection system started'})
-    except Exception as e:
-        print(f"Error starting height detection: {e}")
-        return jsonify({'status': False, 'message': str(e)})
-
 @app.route('/height_weight_system', methods=['GET', 'POST'])
-def height_weight_system():
-    """Route to run integrated_system.py logic"""
-    try:
-        if not session or 'user_id' not in session:
-            return redirect(url_for('login', next='height_weight_system'))
-            
-        # Get user email from session
-        user_email = None
-        user = db.users.find_one({'_id': ObjectId(session['user_id'])})
-        if user:
-            user_email = user.get('email')
-        
-        # Import and run the integrated system
-        import subprocess
-        import sys
-        
-        # Prepare command with user email if available
-        cmd = [sys.executable, 'integrated_system.py']
-        if user_email:
-            cmd.append(user_email)
-        
-        # Start the process
-        try:
-            process = subprocess.Popen(cmd, 
-                           cwd=os.getcwd(), 
-                           creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-            
-            # Store process info in session for tracking
-            session['height_weight_process'] = {
-                'pid': process.pid,
-                'user_email': user_email,
-                'started_at': datetime.utcnow().isoformat()
-            }
-            
-            return jsonify({
-                'status': 'success',
-                'message': 'Height and weight analysis started successfully',
-                'redirect_url': '/performance_dashboard'
-            })
-        except Exception as process_error:
-            print(f"Error starting process: {process_error}")
-            return jsonify({
-                'status': 'error',
-                'message': 'Failed to start analysis system'
-            }), 500
-            
-    except Exception as e:
-        print(f"Error in height_weight_system route: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+def height_detection():
+    """Old entry points that launched a separate program - now the built-in camera test."""
+    if request.method == 'GET':
+        return redirect('/ex/height_weight')
+    return jsonify({'status': 'moved', 'message': 'Height & Weight is now a built-in test', 'redirect_url': '/ex/height_weight'})
 
 @app.route('/situps')
 def situps():
@@ -1715,11 +1648,15 @@ def create_sample_vertical_jump_data():
 @app.route('/vertical_jump_ui')
 def vertical_jump_ui():
     """Route for vertical jump UI page"""
+    if "vertical_jump" in LEGACY_MISSING:
+        return redirect('/ex/vertical_jump')
     return render_template('index_verticaljump.html')
 
 @app.route('/dumbbell_ui')
 def dumbbell_ui():
     """Route for dumbbell UI page"""
+    if "dumbbell_curls" in LEGACY_MISSING:
+        return redirect('/ex/dumbbell_curls')
     return render_template('index_dumbbell.html')
 
 @app.route('/displayVerticalJump')

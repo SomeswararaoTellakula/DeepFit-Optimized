@@ -89,7 +89,7 @@ The page header shows a live chip (`Meta AI: SAM ✓ Spark ✓ Voice ✓`), so j
 
 ## Run it
 
-1. In `.env` (never commit it): `MODEL_API_KEY=...`. This is optional: without it the whole game still works, using the fallbacks.
+1. In `.env` (never commit it): `MODEL_API_KEY=...` and/or `GROQ_API_KEY=...`. Both are optional: without them the whole game still works, using the fallbacks. With both, `llm.py` tries Meta's Muse Spark first; if Meta answers 401/402/403/404 (e.g. no credits) it moves on to Groq (Muse Spark open weights, then Llama 3.3 70B; Qwen for photos; Whisper for voice) and skips the failed one for 15 minutes. The coach, the chatbot and the photo readers show which model answered.
 2. Start the app: `python app.py`.
 3. On this computer, open **http://localhost:7860/arena**.
    - No camera, or recording the demo? Open **http://localhost:7860/arena?sim=1**. A simulated player plays the whole game.
