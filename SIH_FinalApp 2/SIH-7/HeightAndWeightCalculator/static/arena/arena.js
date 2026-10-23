@@ -17,7 +17,7 @@
 
 import * as ART from './art.js?v=2';
 import { sfx, tone, audio, playMusic, stopMusic, setMuted, duck, beatPulse, SOUND } from './sound.js?v=2';
-import { LandmarkFilter, classifyMove, MoveTracker } from './motion.js?v=1';
+import { LandmarkFilter, classifyMove, MoveTracker, PunchDetector } from './motion.js?v=2';
 
 const CFG = JSON.parse(document.getElementById('arena-cfg').textContent);
 const Q = new URLSearchParams(location.search);
@@ -47,7 +47,7 @@ const I18N = {
     hands_in_view: 'Move back a little, so your raised hands stay in the picture.',
     sees: 'I see',
     step_back_upper: 'Now sit back so your head, shoulders and arms are in the frame.',
-    boxing_intro: 'Shadow Boxing! Punch the pads as fast as you can - left or right.',
+    boxing_intro: 'Shadow Boxing! Fists up by your chin. When a pad lights up, punch towards the screen with that hand - then bring the fist back.',
     pow: 'POW!',
     bonus_title: 'UNLOCK 3 BONUS LEVELS?', bonus_text: 'Raider Dodge, Log Jump and Bull Run measure reflexes, agility and power. They need your whole body in view - step back from the camera.',
     bonus_yes: 'Yes - play the bonus levels', bonus_no: 'Show my results',
@@ -83,7 +83,7 @@ const I18N = {
     hands_in_view: 'थोड़ा पीछे हटिए, ताकि ऊपर उठे हाथ तस्वीर में रहें।',
     sees: 'दिख रहा है',
     step_back_upper: 'अब पीछे बैठिए ताकि सिर, कंधे और हाथ फ्रेम में दिखें।',
-    boxing_intro: 'शैडो बॉक्सिंग! जितनी तेज़ी से हो सके पैड पर मुक्का मारो - बाएँ या दाएँ।',
+    boxing_intro: 'शैडो बॉक्सिंग! मुट्ठियाँ ठोड़ी के पास रखो। जिस तरफ़ पैड जले, उस हाथ से स्क्रीन की ओर मुक्का मारो - फिर मुट्ठी वापस लाओ।',
     pow: 'धमाक!',
     bonus_title: '3 बोनस लेवल खोलें?', bonus_text: 'रेडर से बचो, लकड़ी कूदो और सांड दौड़ - प्रतिक्रिया, फुर्ती और ताकत मापते हैं। इनमें पूरा शरीर दिखना चाहिए - कैमरे से पीछे हटिए।',
     bonus_yes: 'हाँ - बोनस लेवल खेलो', bonus_no: 'मेरे नतीजे दिखाओ',
@@ -119,7 +119,7 @@ const I18N = {
     hands_in_view: 'కొంచెం వెనక్కి వెళ్లండి, పైకెత్తిన చేతులు చిత్రంలో ఉండాలి.',
     sees: 'కనిపిస్తోంది',
     step_back_upper: 'ఇప్పుడు తల, భుజాలు, చేతులు ఫ్రేమ్‌లో కనిపించేలా వెనక్కి కూర్చోండి.',
-    boxing_intro: 'షాడో బాక్సింగ్! ప్యాడ్‌లను వీలైనంత వేగంగా గుద్దండి - ఎడమ లేదా కుడి.',
+    boxing_intro: 'షాడో బాక్సింగ్! పిడికిళ్లు గడ్డం దగ్గర ఉంచండి. ఏ వైపు ప్యాడ్ వెలిగితే ఆ చేత్తో స్క్రీన్ వైపు గుద్దండి - తర్వాత పిడికిలి వెనక్కి తీసుకోండి.',
     pow: 'ఢాం!',
     bonus_title: '3 బోనస్ లెవెల్స్ తెరవాలా?', bonus_text: 'రైడర్ తప్పించుకో, దుంగ దూకు, ఎద్దు పరుగు - ప్రతిస్పందన, చురుకుదనం, శక్తిని కొలుస్తాయి. వీటికి శరీరం మొత్తం కనిపించాలి - కెమెరా నుండి వెనక్కి వెళ్లండి.',
     bonus_yes: 'అవును - బోనస్ లెవెల్స్ ఆడతా', bonus_no: 'నా ఫలితాలు చూపించు',
@@ -844,61 +844,53 @@ class Bowler extends Level {
 // Shadow Boxing (upper-body game): punch the pads that pop up left and right. It raises the heart
 // rate before the heart scan, like Bull Run does in the full-body game. Points only - no talent trait.
 class Boxing extends Level {
-  constructor(secs) { super('boxing'); this.secs = secs; this.hits = 0; this.pads = 0; this.rts = []; this.pad = null; this.nextAt = 0; this.armed = true; }
+  // A real punch goes towards the camera, so it is read in 3D (PunchDetector in motion.js); hooks out to the
+  // side are read in 2D. A pad on the left of the screen is for the left fist (the view is a mirror), but a
+  // cross from the other hand that lands on that side counts too. Each fist must come back before it scores again.
+  constructor(secs) { super('boxing'); this.secs = secs; this.hits = 0; this.pads = 0; this.rts = []; this.pad = null; this.nextAt = 0; this.pd = new PunchDetector(); this.kinds = { forward: 0, side: 0 }; }
   start(now) {
-    this.t0 = now; this.state = 'run'; sfx.go(); this.nextAt = now + 300;
+    this.t0 = now; this.state = 'run'; sfx.go(); this.nextAt = now + 800;      // a moment to raise the guard
     SIM && SIM.cue('boxing', { until: now + this.secs * 1000 });
   }
   spawn(now) {
     const side = this.pads === 0 ? 1 : Math.random() < 0.5 ? -1 : 1;     // screen side
-    this.pad = { side, t: now, dy: rand(-0.2, 0.3) }; this.pads++; this.prevW = null;
+    this.pad = { side, t: now, dy: rand(-0.5, -0.1) }; this.pads++;
     if (S.mode === 'blind') tone(side < 0 ? 520 : 780, 90, { pan: side * 0.9 });
     SIM && SIM.cue('pad', { side, t: now });
   }
-  padAt(b) {     // video pixels, mirrored like bodyInfo
+  padAt(b) {     // video pixels, mirrored like bodyInfo: in front of that shoulder, at face height
     const sw = S.base.sw, sx = b ? b.shX : S.base.hipX, sy = b ? b.shY : S.base.hipY - 1.5 * sw;
-    return { x: sx + this.pad.side * 1.6 * sw, y: sy + this.pad.dy * sw };
+    return { x: sx + this.pad.side * 1.3 * sw, y: sy + this.pad.dy * sw };
   }
   update(now) {
     if (this.state !== 'run') return;
     const left = this.secs - (now - this.t0) / 1000;
     textTrial(`⏱ ${Math.max(0, Math.ceil(left))} s   🥊 ${this.hits}`);
     if (!this.pad && now >= this.nextAt) this.spawn(now);
-    const b = S.body, lm = S.lm;
-    if (this.pad && b && lm) {
-      const p = this.padAt(b), r = 0.9 * S.base.sw;
-      // a punch only counts after the fists came back to the body (holding the arms out doesn't score)
-      const guard = [15, 16].every((i) => lm[i].v < 0.4 || Math.abs((1 - lm[i].x) * S.vw - b.shX) < 1.0 * S.base.sw);
-      if (guard) this.armed = true;
-      // fast punches: the fist can jump past the pad between two frames, so test the whole path it travelled
-      // since the last frame (raw points, no smoothing lag), not only where it is now
-      const raw = S.lmRaw || lm, prevW = this.prevW || {};
-      const segDist = (a, b2, q) => { const dx = b2.x - a.x, dy = b2.y - a.y, L = dx * dx + dy * dy; const u = L ? clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / L, 0, 1) : 0; return Math.hypot(a.x + u * dx - q.x, a.y + u * dy - q.y); };
-      const hit = this.armed && [15, 16].some((i) => {
-        if (raw[i].v < 0.3) return false;
-        const cur = { x: (1 - raw[i].x) * S.vw, y: raw[i].y * S.vh }, prev = prevW[i] || cur;
-        return segDist(prev, cur, p) < r;
-      });
-      this.prevW = { 15: { x: (1 - raw[15].x) * S.vw, y: raw[15].y * S.vh }, 16: { x: (1 - raw[16].x) * S.vw, y: raw[16].y * S.vh } };
-      if (hit) {
-        this.hits++; this.rts.push(now - this.pad.t); this.armed = false;
+    // raw points (no smoothing lag: a punch lasts ~0.2 s)
+    const punches = this.pd.feed(now, S.lmRaw, S.worldRaw, { vw: S.vw, vh: S.vh });
+    if (this.pad && S.body) {
+      const p = this.padAt(S.body);
+      const hit = punches.find((pu) => (pu.arm === 'L' ? -1 : 1) === this.pad.side || pu.sideOf === this.pad.side);
+      if (hit && now - this.pad.t > 100) {           // faster than 0.1 s after the pad appeared = already punching, not a reaction
+        this.hits++; this.rts.push(now - this.pad.t); this.kinds[hit.kind]++;
         const at = V(p.x, p.y);
         sfx.hit(); ART.burst(at.x, at.y, { n: 18, size: 8 * DPR, speed: 380 * DPR, gravity: 600 * DPR });
         award(50, at, this.hits % 5 === 0 ? `${this.hits}!` : T('pow'), '#fde047');
         if (this.hits % 10 === 0) sfx.cheer();
-        this.pad = null; this.nextAt = now + 120;
+        this.pad = null; this.nextAt = now + 150;
       } else if (now - this.pad.t > 1800) { this.pad = null; this.nextAt = now + 100; }
     }
     if (left <= 0) {
       this.state = 'done';
-      S.raw.boxing = { hits: this.hits, pads: this.pads, secs: this.secs, median_ms: this.rts.length ? Math.round(median(this.rts)) : null };
+      S.raw.boxing = { hits: this.hits, pads: this.pads, secs: this.secs, median_ms: this.rts.length ? Math.round(median(this.rts)) : null, forward: this.kinds.forward, side: this.kinds.side };
       success(true); sfx.cheer(true); this.finish(true);
     }
   }
   draw(g, V_, now) {
     if (this.state !== 'run' || !S.base) return;
     if (this.pad) {
-      const p = V(...Object.values(this.padAt(S.body))), r = 0.9 * S.base.sw * V.s, age = (now - this.pad.t) / 1800;
+      const p = V(...Object.values(this.padAt(S.body))), r = 0.75 * S.base.sw * V.s, age = (now - this.pad.t) / 1800;
       g.save();
       g.fillStyle = this.pad.side < 0 ? '#ef4444' : '#3b82f6'; g.strokeStyle = '#fff'; g.lineWidth = 6 * DPR;
       g.shadowColor = g.fillStyle; g.shadowBlur = 24;
@@ -908,6 +900,8 @@ class Boxing extends Level {
       g.font = `${Math.round(r)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('🥊', p.x, p.y + 2 * DPR);
       g.restore();
     }
+    // guard reminder: both fists up by the chin
+    if (now - this.t0 < 2500 && S.mode !== 'blind') bigText(g, '✊ ✊', VIEW.W / 2, VIEW.H * 0.22, 60 * DPR, '#fde047');
     const left = Math.max(0, this.secs - (now - this.t0) / 1000);
     bigText(g, `${Math.ceil(left)}`, VIEW.W * 0.88, VIEW.H * 0.3, 110 * DPR, left <= 3 ? '#ef4444' : '#fff');
   }
@@ -1345,7 +1339,7 @@ function detect(now) {
         updateMask(simMask());
       } catch (e) { /* ignore */ }
     }
-    return SIM.landmarks(now);
+    const lm = SIM.landmarks(now); S.worldRaw = SIM.world(lm); return lm;
   }
   if (!landmarker || S.src.readyState < 2) return null;
   const ts = Math.max(lastTs + 1, Math.round(now)); lastTs = ts;
@@ -1353,6 +1347,8 @@ function detect(now) {
   checkPoseSpeed(performance.now() - t0);
   try { if (r.segmentationMasks && r.segmentationMasks[0]) updateMask(r.segmentationMasks[0]); } catch (e) { S.maskOk = false; }
   try { if (r.segmentationMasks) r.segmentationMasks.forEach((m) => m.close && m.close()); } catch (e) { /* ignore */ }
+  // 3D points in metres (z = towards the camera): Shadow Boxing reads forward punches from these
+  S.worldRaw = r && r.worldLandmarks && r.worldLandmarks[0] ? r.worldLandmarks[0].map((p) => ({ x: p.x, y: p.y, z: p.z, v: p.visibility ?? 1 })) : null;
   return r && r.landmarks && r.landmarks[0] ? r.landmarks[0].map((p) => ({ x: p.x, y: p.y, v: p.visibility ?? 1 })) : null;
 }
 const WORLD_LIGHT = {        // the colour of each world's light, laid over the player so they look lit by the scene
@@ -1430,9 +1426,9 @@ class SimPlayer {
     } else if (kind === 'close') { this.close = d.on; if (d.bpm) this.bpm = d.bpm; }
     else if (kind === 'escape') { this.runUntil = d.until; }
     else if (kind === 'fullbody') { this.at(now + 1500, () => { this.upper = false; }); }
-    else if (kind === 'pad') {          // punch: both arms out (reaches either pad), then back
-      const rt = rand(250, 450);
-      this.at(now + rt, () => { this.punch = true; }); this.at(now + rt + 280, () => { this.punch = false; });
+    else if (kind === 'pad') {          // punch with the fist on the pad's side: mostly straight at the camera, sometimes a hook
+      const rt = rand(250, 450), punch = { arm: d.side < 0 ? 'L' : 'R', kind: Math.random() < 0.7 ? 'forward' : 'side' };
+      this.at(now + rt, () => { this.punch = punch; }); this.at(now + rt + 280, () => { this.punch = null; });
     }
   }
   step(now) {
@@ -1456,11 +1452,23 @@ class SimPlayer {
     if (this.upper) {                 // closer to the camera: zoom on the upper body, hips and legs out of view
       for (const k in P) { const x = (P[k][0] - 0.5) * 1.6 + 0.5, y = (P[k][1] - 0.3) * 1.6 + 0.36; set(+k, x, y, +k >= 23 ? 0.05 : 0.99); }
     }
-    if (this.punch) {                 // both fists out at shoulder height, where the pads are
+    this.wz = {};
+    if (this.punch) {                 // camera view: athlete's LEFT arm (11/13/15) is on the image's right (+x)
       const mx = (lm[11].x + lm[12].x) / 2, my = (lm[11].y + lm[12].y) / 2, sw = Math.abs(lm[11].x - lm[12].x);
-      lm[15] = { x: mx + 1.55 * sw, y: my, v: 0.99 }; lm[16] = { x: mx - 1.55 * sw, y: my, v: 0.99 };
+      const [s, e, w, sg] = this.punch.arm === 'L' ? [11, 13, 15, 1] : [12, 14, 16, -1];
+      if (this.punch.kind === 'side') {
+        lm[w] = { x: mx + sg * 1.55 * sw, y: my, v: 0.99 }; lm[e] = { x: mx + sg * 1.05 * sw, y: my, v: 0.99 };
+      } else {                        // straight at the camera: in the picture the fist stays in front of the shoulder
+        lm[w] = { x: lm[s].x - sg * 0.15 * sw, y: lm[s].y - 0.05 * sw, v: 0.99 }; lm[e] = { x: lm[s].x - sg * 0.05 * sw, y: lm[s].y + 0.1 * sw, v: 0.99 };
+        this.wz = { [e]: -0.27, [w]: -0.55 };
+      }
     }
     return lm;
+  }
+  world(lm) {     // MediaPipe-style 3D points in metres (z towards the camera negative), from the 2D points + the punch depth
+    if (!lm) return null;
+    const k = 0.36 / Math.max(1, Math.abs(lm[11].x - lm[12].x) * 640), mx = (lm[11].x + lm[12].x) / 2 * 640, my = (lm[11].y + lm[12].y) / 2 * 480;
+    return lm.map((p, i) => ({ x: (p.x * 640 - mx) * k, y: (p.y * 480 - my) * k, z: (this.wz && this.wz[i]) || 0, v: p.v }));
   }
   render(now) {   // the simulated "camera picture": a cartoon kid on a transparent background (the pulse reader samples its skin)
     const g = this.g; g.clearRect(0, 0, 640, 480);

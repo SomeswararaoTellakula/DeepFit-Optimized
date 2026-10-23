@@ -166,3 +166,65 @@ export class MoveTracker {
   }
   get restingFor() { return this.neutralSince; }
 }
+
+// ------------------------------------------------------------------ PunchDetector (Shadow Boxing)
+// A real punch goes FORWARD, towards the camera: in the picture the fist hardly moves sideways - it stays in
+// front of the shoulder and just gets bigger. So a punch is read from MediaPipe's 3D "world" points (metres,
+// z = towards the camera): the wrist shoots forward of the shoulder with the elbow (nearly) straight.
+// Side punches (hooks, or reaching out to the side) are read from the 2D picture as well.
+// Each arm must come back (retract) before it can punch again, so holding an arm out never scores twice.
+// feed() returns the punches that landed in this frame: [{ arm: 'L'|'R' (athlete's own side = screen side in
+// the mirrored view), kind: 'forward'|'side', wx: wrist x in mirrored pixels }].
+const ang3 = (a, b, c) => {
+  const v1 = [a.x - b.x, a.y - b.y, a.z - b.z], v2 = [c.x - b.x, c.y - b.y, c.z - b.z];
+  const n = Math.hypot(...v1) * Math.hypot(...v2);
+  return n === 0 ? 180 : Math.acos(clamp((v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]) / n, -1, 1)) * 180 / Math.PI;
+};
+export class PunchDetector {
+  constructor({ fwdReach = 0.3, fwdStraight = 120, sideReach = 1.15, back = 0.15 } = {}) {
+    this.o = { fwdReach, fwdStraight, sideReach, back };
+    this.arm = { L: this.fresh(), R: this.fresh() };
+  }
+  fresh() { return { armed: true, ext: 0, len: [], lastZ: null, lastT: null, reach: 0, side: 0, hist: [] }; }
+  reset() { this.arm = { L: this.fresh(), R: this.fresh() }; }
+  feed(t, lm, world, { vw = 640, vh = 480 } = {}) {
+    const out = [];
+    if (!lm) return out;
+    const px = (i) => ({ x: (1 - lm[i].x) * vw, y: lm[i].y * vh });                   // mirrored pixels
+    const sw = Math.max(8, Math.abs(px(11).x - px(12).x)), mid = (px(11).x + px(12).x) / 2;
+    for (const [name, s, e, w] of [['L', 11, 13, 15], ['R', 12, 14, 16]]) {
+      const A = this.arm[name];
+      if (lm[s].v < 0.5) { A.ext = 0; continue; }
+      // --- 3D: how far the fist is in front of the shoulder, as a share of the arm's length
+      let fwd = null, straight = 180, speed = 0;
+      if (world && world[s] && world[e] && world[w] && world[w].v >= 0.2 && world[e].v >= 0.2) {
+        const S3 = world[s], E3 = world[e], W3 = world[w];
+        const len = Math.hypot(S3.x - E3.x, S3.y - E3.y, S3.z - E3.z) + Math.hypot(E3.x - W3.x, E3.y - W3.y, E3.z - W3.z);
+        A.len.push(len); if (A.len.length > 45) A.len.shift();
+        const L = clamp([...A.len].sort((a, b) => a - b)[A.len.length >> 1], 0.35, 0.9);   // steady arm length
+        fwd = (S3.z - W3.z) / L; straight = ang3(S3, E3, W3);
+        // MediaPipe's depth is squeezed and offset differently for every person and camera, so the reach is
+        // measured from this arm's own resting (guard) position over the last few seconds
+        A.hist.push({ t, f: fwd }); A.hist = A.hist.filter((h) => t - h.t < 4000);
+        const fs = A.hist.map((h) => h.f).sort((a, b) => a - b), base = fs[Math.floor(fs.length * 0.2)];
+        fwd -= Math.max(-0.1, Math.min(0.35, base));
+        if (A.lastZ != null && t > A.lastT) speed = (A.lastZ - W3.z) / ((t - A.lastT) / 1000);   // m/s towards the camera
+        A.lastZ = W3.z; A.lastT = t;
+      }
+      // --- 2D: how far the fist is out to the side of the body, in shoulder widths
+      const W2 = px(w), side = lm[w].v >= 0.2 ? Math.abs(W2.x - mid) / sw : 0;
+      const straight2 = lm[e].v >= 0.2 && lm[w].v >= 0.2 ? angle(px(s), px(e), W2) : 0;
+      A.reach = fwd ?? 0; A.side = side;
+      // (the elbow angle in depth is noisy, so a fist far in front of the shoulder counts whatever the angle)
+      const forward = fwd != null && (fwd > 0.45 || (fwd > this.o.fwdReach && straight > this.o.fwdStraight - 15) || (fwd > 0.22 && speed > 1.4 && straight > 105));
+      const sideways = side > this.o.sideReach && straight2 > 135;
+      const retracted = (fwd == null || fwd < this.o.back || straight < 95) && side < 0.85;
+      if (retracted) A.armed = true;
+      if (A.armed && (forward || sideways)) {
+        A.ext++;
+        if (A.ext >= 2) { A.armed = false; A.ext = 0; out.push({ arm: name, kind: forward ? 'forward' : 'side', wx: W2.x, sideOf: Math.sign(W2.x - mid) }); }
+      } else A.ext = 0;
+    }
+    return out;
+  }
+}
