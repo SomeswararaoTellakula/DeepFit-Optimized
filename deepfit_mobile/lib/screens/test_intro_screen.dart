@@ -5,6 +5,7 @@ import '../services/api.dart';
 import '../services/app_state.dart';
 import '../services/speech.dart';
 import '../widgets/common.dart';
+import 'gps_run_screen.dart';
 import 'height_weight_screen.dart';
 import 'lr_check_screen.dart';
 import 'photo_capture_screen.dart';
@@ -90,6 +91,9 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
     Widget screen;
     if (t.kind == 'height_weight') {
       screen = const HeightWeightScreen();
+    } else if (t.kind == 'stopwatch' && t.key == 'run_600m') {
+      _chooseRunTiming(t);
+      return;
     } else if (t.kind == 'stopwatch') {
       screen = StopwatchScreen(info: t);
     } else {
@@ -111,6 +115,39 @@ class _TestIntroScreenState extends State<TestIntroScreen> {
           loadKg: load, loadDetect: detect);
     }
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => screen));
+  }
+
+  /// 600 m: the phone can time it by itself (GPS + steps, checked by the server) or the coach uses the stopwatch.
+  Future<void> _chooseRunTiming(TestInfo t) async {
+    final gps = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('How should the run be timed?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              icon: const Icon(Icons.gps_fixed),
+              label: const Text('Phone GPS - the runner carries the phone (outdoors)'),
+              onPressed: () => Navigator.of(c).pop(true),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.timer),
+              label: const Text('Coach stopwatch'),
+              onPressed: () => Navigator.of(c).pop(false),
+            ),
+            const SizedBox(height: 8),
+            const Text('Phone GPS results are checked by the server for running rhythm, speed and a face photo at the finish.',
+                style: TextStyle(color: DeepFitColors.muted, fontSize: 12)),
+          ]),
+        ),
+      ),
+    );
+    if (gps == null || !mounted) return;
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => gps ? GpsRunScreen(info: t) : StopwatchScreen(info: t)));
   }
 
   @override

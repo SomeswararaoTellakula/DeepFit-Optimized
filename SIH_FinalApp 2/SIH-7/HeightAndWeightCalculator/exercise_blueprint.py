@@ -305,6 +305,9 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
                 db.pose_replays.insert_one({"_id": doc["_id"], **replay})
             if ex.key == "height_weight" and doc.get("height_cm") and not doc.get("incomplete") and doc.get("user_email"):
                 db["Final_Estimated_Height_and_Weight"].insert_one(height_record(doc))   # dashboard + reports read this
+            legacy = legacy_record(doc)
+            if legacy:
+                db[legacy[0]].insert_one(legacy[1])     # the cumulative dashboard and Best Results read these
         except Exception as e:
             log_error(f"Saving {ex.key} result failed: {e}")
     out = {k: v for k, v in doc.items() if k not in ("user_id", "date", "_id")}
@@ -318,6 +321,27 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
     return out
 
 
+def legacy_record(doc: Dict):
+    """Sit-ups, Vertical Jump and Dumbbell Curls now exist once (in this engine). The cumulative dashboard and
+    Best Results / qualification still read the old pages' collections, so each real engine result is also
+    written there in the old format. Returns (collection, record) or None."""
+    key, email = doc.get("exercise_type"), doc.get("user_email")
+    if key not in ("situps", "vertical_jump", "dumbbell_curls") or not email or doc.get("value") is None:
+        return None
+    now = datetime.utcnow()
+    secs = int(doc.get("duration") or 0)
+    base = {"user_email": email, "submission_time": now, "timer_time": f"{secs // 60}:{secs % 60:02d}",
+            "exercise_result_id": str(doc.get("_id", "")), "source": "DeepFit test engine"}
+    if key == "situps":
+        return "situps", {**base, "reps_completed": int(doc["value"]), "form_quality": doc.get("form_score"), "created_at": now}
+    if key == "vertical_jump":
+        return "Vertical_Jump", {**base, "max_height": float(doc["value"]), "total_jumps": int(doc.get("repetitions") or 0),
+                                 "session_start": now.isoformat()}
+    return "DumbBell", {**base, "total_reps": int(doc["value"]), "estimated_weight": doc.get("load_kg"),
+                        "timestamp": now.strftime("%Y%m%d_%H%M%S"), "exercise_type": "dumbbell_curls",
+                        "analysis_date": now.isoformat()}
+
+
 def height_record(doc: Dict) -> Dict:
     """Same fields the old height page wrote, so the dashboard, reports and qualification keep working."""
     m = doc.get("measurement") or {}
@@ -325,7 +349,7 @@ def height_record(doc: Dict) -> Dict:
             "final_weight_kg": doc.get("weight_kg"), "bmi": doc.get("bmi"), "bmi_category": doc.get("bmi_category"),
             "height_uncertainty": f"±{max(0.5, m.get('spread_cm') or 0.5):.1f} cm",
             "weight_uncertainty": "as the scale" if doc.get("weight_source") == "scale_photo" else "typed",
-            "confidence_level": "99%", "total_instances": m.get("samples"),
+            "confidence_level": "camera, about ±1 cm", "total_instances": m.get("samples"),
             "method": f"camera + {m.get('reference') or 'reference'}; weight {doc.get('weight_source') or 'not given'}",
             "exercise_result_id": str(doc.get("_id", "")), "timestamp": datetime.utcnow()}
 

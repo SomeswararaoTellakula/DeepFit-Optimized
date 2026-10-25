@@ -199,16 +199,23 @@ def get_db():
 # The three original test pages use the old MediaPipe API (mp.solutions), which new MediaPipe
 # releases (the only ones for the newest Python) no longer have. If they can't load, the site still
 # starts and their addresses open the same test in the shared engine (which works with every version).
+# Since the shared engine has its own Sit-ups, Vertical Jump and Dumbbell Curls (with face checks, the Talent
+# Passport and, for curls, the weight check), the old pages are switched OFF by default so each test exists once.
+# Their addresses open the engine test. DEEPFIT_LEGACY_PAGES=1 brings the old pages back.
 from flask import Blueprint as _Blueprint
 LEGACY_MISSING = set()
+_LEGACY_ON = os.environ.get("DEEPFIT_LEGACY_PAGES", "0") == "1"
 for _mod, _bp_name, _prefix, _engine_key in (("situp_blueprint", "situp_bp", "/situp", "situps"),
                                              ("vertical_jump_blueprint", "vertical_jump_bp", "/vertical_jump", "vertical_jump"),
                                              ("dumbbell_blueprint", "dumbbell_bp", "/dumbbell", "dumbbell_curls")):
     try:
+        if not _LEGACY_ON:
+            raise RuntimeError("old page switched off (one version of each test)")
         app.register_blueprint(getattr(__import__(_mod), _bp_name), url_prefix=_prefix)
     except Exception as _e:
         LEGACY_MISSING.add(_engine_key)
-        print(f"[DeepFit] {_mod} not loaded ({type(_e).__name__}: {_e}) - {_prefix} now opens /ex/{_engine_key}")
+        if _LEGACY_ON:
+            print(f"[DeepFit] {_mod} not loaded ({type(_e).__name__}: {_e}) - {_prefix} now opens /ex/{_engine_key}")
         _fallback = _Blueprint(_bp_name, __name__)
         _fallback.add_url_rule("/", _bp_name + "_home", (lambda k=_engine_key: redirect(f"/ex/{k}")))
         _fallback.add_url_rule("/<path:_rest>", _bp_name + "_any", (lambda _rest=None, k=_engine_key: redirect(f"/ex/{k}")))
@@ -746,17 +753,8 @@ def upload():
                 'status': 'completed'
             }).inserted_id
             
-            # Create exercise results record with AI analysis (mock data for now)
-            form_score = random.randint(70, 95)  # Mock form score between 70-95%
-            db.exercise_results.insert_one({
-                'session_id': session_id,
-                'user_id': ObjectId(session['user_id']),
-                'form_score': form_score,
-                'form_feedback': generate_form_feedback(form_score),
-                'range_of_motion': random.randint(70, 95),
-                'speed_control': random.randint(70, 95),
-                'analyzed_at': datetime.utcnow()
-            })
+            # Uploaded videos are not analysed automatically: no score is stored (never a made-up one).
+            # The camera tests (/tests) are where form is measured.
             
             return redirect(url_for('results'))
     
@@ -870,6 +868,8 @@ def situps_system():
     """Route to run app_situp.py logic"""
     if not session or 'user_id' not in session:
         return redirect(url_for('login'))
+    if "situps" in LEGACY_MISSING:
+        return redirect('/ex/situps')
     return redirect(url_for('situp.index'))
 
 @app.route('/result_analysis')
@@ -1253,6 +1253,8 @@ def displaysitup():
 @app.route('/dumbbell')
 def dumbbell():
     """Route to start dumbbell curl detection system"""
+    if "dumbbell_curls" in LEGACY_MISSING:          # one version of the test: the engine's Dumbbell Curls
+        return redirect('/ex/dumbbell_curls')
     try:
         if not session or 'user_id' not in session:
             return redirect(url_for('login', next='dumbbell'))
@@ -1380,6 +1382,8 @@ def get_latest_situp_result():
 @app.route('/vertical_jump')
 def vertical_jump():
     """Route to start vertical jump detection system"""
+    if "vertical_jump" in LEGACY_MISSING:           # one version of the test: the engine's Vertical Jump
+        return redirect('/ex/vertical_jump')
     try:
         # Import and run the advanced vertical jump system
         import subprocess
@@ -1585,17 +1589,10 @@ def get_vertical_jump_data():
             
             return jsonify(data)
         else:
-            # Return sample data if no MongoDB connection
-            sample_data = create_sample_vertical_jump_data()
-            return jsonify(sample_data)
+            return jsonify([])          # no database: nothing to show (never invented jumps)
     except Exception as e:
         log_error(f"Error getting vertical jump data: {e}")
-        # Return sample data on error
-        try:
-            sample_data = create_sample_vertical_jump_data()
-            return jsonify(sample_data)
-        except:
-            return jsonify([])
+        return jsonify([])
 
 def create_sample_vertical_jump_data():
     """Create sample vertical jump data for demonstration"""
@@ -1728,7 +1725,9 @@ def test_benchmark_system():
 
 @app.route('/api/create_sample_exercise_data', methods=['POST'])
 def create_sample_exercise_data():
-    """Create sample exercise data for testing"""
+    """Create sample exercise data for testing (only with DEEPFIT_DEMO_DATA=1 - it writes made-up results)"""
+    if os.environ.get("DEEPFIT_DEMO_DATA") != "1":
+        return jsonify({'success': False, 'error': 'Sample data is switched off: results come only from real tests.'}), 403
     try:
         if not session or 'user_id' not in session:
             return jsonify({'success': False, 'error': 'Not authenticated'}), 401
@@ -1810,11 +1809,13 @@ def save_qualified_results():
         dumbbell_result = db.DumbBell.find_one({'user_email': user_email}, sort=[('submission_time', -1)])
         jump_result = db.Vertical_Jump.find_one({'user_email': user_email}, sort=[('session_start', -1)])
         
-        # Use sample data if no results found (for demonstration)
-        import random
-        situps_score = situp_result.get('reps_completed', 0) if situp_result else random.randint(8, 15)
-        jump_score = jump_result.get('max_height', 0) if jump_result else random.uniform(45, 75)
-        dumbbell_score = dumbbell_result.get('total_reps', 0) if dumbbell_result else random.randint(10, 20)
+        # Every score must come from a real test - missing tests are never filled with made-up numbers
+        missing = [n for n, r in (("Sit-ups", situp_result), ("Vertical Jump", jump_result), ("Dumbbell Curls", dumbbell_result)) if not r]
+        if missing:
+            return jsonify({'success': False, 'error': 'Complete these tests first: ' + ', '.join(missing)}), 400
+        situps_score = situp_result.get('reps_completed', 0)
+        jump_score = jump_result.get('max_height', 0)
+        dumbbell_score = dumbbell_result.get('total_reps', 0)
         
         # Get height/weight measurement
         measurement = None

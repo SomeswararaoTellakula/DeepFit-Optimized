@@ -54,6 +54,7 @@ from flask import Blueprint, current_app, jsonify, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 import benchmarks
+import run_check
 import exercise_blueprint as XB          # imports exercise_engine first (registers Coachability + Growth)
 import exercise_engine as EE
 import passport
@@ -560,7 +561,7 @@ def upload_result(ath):
     mode = d.get("mode") if d.get("mode") in XB.MODES else "standard"
     camera_test = cls.camera != "none"
 
-    frames, width, height, manual = [], 0, 0, None
+    frames, width, height, manual, rc = [], 0, 0, None, None
     if camera_test:
         frames, problem = parse_frames(d.get("frames"), cls.duration)
         if problem:
@@ -569,6 +570,13 @@ def upload_result(ath):
         width, height = int(_num(size.get("w"), 64, 4096) or 0), int(_num(size.get("h"), 64, 4096) or 0)
         if not width or not height:
             return _err("Upload rejected: frame size missing.")
+    elif key == "run_600m" and isinstance(d.get("gps_run"), dict):
+        # timed by the phone's GPS + step counter: the server recomputes the time from the raw track
+        rc = run_check.check_run(d["gps_run"], 600.0, age=ath.get("age"),
+                                 height_cm=_num(d.get("height_cm"), 100, 230) or _height_for(ath))
+        if not rc.get("ok"):
+            return _err(rc.get("problem") or "The run could not be measured.")
+        manual = rc["value"]
     else:
         manual = _num(d.get("manual_value"), 1, 3600)
         if manual is None:
@@ -601,6 +609,8 @@ def upload_result(ath):
         ex.load_detect = ({k: det.get(k) for k in ("source", "kg", "label_text", "model", "sure", "object")}
                           if _num(det.get("kg"), 0.25, 60) == load_kg else {"source": "typed"})
     res = ex.result()
+    if rc is not None:
+        _finish_face(ath, rc, d.get("snapshots") or [])
     client_value = _num((d.get("client_result") or {}).get("value"), -1e6, 1e6)
     same = client_value is None or abs(client_value - float(res["value"])) <= max(VALUE_TOLERANCE, 0.01 * abs(res["value"]))
     bench = (XB.load_benchmark(ex, res, ath, _population(mode))
@@ -611,7 +621,9 @@ def upload_result(ath):
         "athlete_gender": ath.get("gender"), "exercise_type": key, "exercise_name": ex.name, **res,
         "duration": int(round(last_t)) if camera_test else None, "mode": mode, "benchmark": bench,
         "identity_checked": REQUIRE_FACE_CHECK, "identity_strikes": ident["strikes"], "stopped_for_identity": False,
-        "coach_timed": not camera_test,
+        "coach_timed": not camera_test and rc is None,
+        **({"timing": "gps", "run_verdict": rc["verdict"], "run_check": {k: v for k, v in rc.items() if k != "points"},
+            "track_hash": _track_hash(d["gps_run"])} if rc is not None else {}),
         "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "date": now,
         "user_email": ath.get("email"), "source": "mobile", "client_id": client_id or None,
         "device": {k: str(v)[:60] for k, v in (d.get("device") or {}).items()} if isinstance(d.get("device"), dict) else None,
@@ -635,10 +647,41 @@ def upload_result(ath):
         doc["passport"] = passport.build(doc, replay_payload, identity)
         doc["athlete_token"] = doc["passport"]["athlete_token"]
     db.exercise_results.insert_one(dict(doc))
+    legacy = XB.legacy_record(doc)
+    if legacy:
+        db[legacy[0]].insert_one(legacy[1])          # cumulative dashboard + Best Results read these
+    if rc is not None and "_id" in doc:          # the raw GPS track, kept so the result can be re-checked later
+        g = d["gps_run"]
+        db.run_tracks.insert_one({"_id": doc["_id"], "points": (g.get("points") or [])[:7200],
+                                  "steps": (g.get("steps") or [])[:20000], "activity": (g.get("activity") or [])[:2000],
+                                  "track_hash": doc["track_hash"]})
     if replay_payload and replay_payload["frames"] and "_id" in doc:
         db.pose_replays.insert_one({"_id": doc["_id"], **replay_payload})
     log_info(f"Mobile result saved: {key} = {res['value']} {res['unit']} (phone said {client_value}) mode={mode}")
     return _ok(status="saved", result=_out(doc, ath), same_as_phone=bool(same))
+
+
+def _track_hash(g: Dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps({"points": g.get("points"), "steps": g.get("steps")}, sort_keys=True,
+                                     separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def _finish_face(ath: Dict, rc: Dict, snaps: List) -> None:
+    """GPS runs: the face photo taken at the finish must be the same athlete (a phone can be carried by
+    anyone - this ties the finish to the registered face)."""
+    if not REQUIRE_FACE_CHECK:
+        return
+    fin = [s for s in snaps if isinstance(s, dict) and s.get("jpg") and (_num(s.get("t"), 0, 7200) or 0) >= rc.get("value", 0)]
+    if not fin:
+        rc["checks"].append({"check": "finish_face_match", "ok": False, "detail": "no face photo at the finish"})
+        rc["flags"].append("no face photo at the finish"); rc["verdict"] = "needs_recheck"
+        return
+    ok, score, info = _verify(ath, str(fin[0]["jpg"]), single=False)
+    detail = "the face at the finish matched the athlete" if ok else "the face at the finish did NOT match the athlete"
+    rc["checks"].append({"check": "finish_face_match", "ok": bool(ok), "detail": detail})
+    if not ok:
+        rc["flags"].append(detail); rc["verdict"] = "needs_recheck"
 
 
 def _out(doc: Dict, ath: Dict) -> Dict:

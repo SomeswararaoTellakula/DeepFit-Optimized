@@ -19,7 +19,8 @@ void _android() {
     return;
   }
   var s = f.readAsStringSync();
-  for (final perm in ['android.permission.INTERNET', 'android.permission.CAMERA']) {
+  for (final perm in ['android.permission.INTERNET', 'android.permission.CAMERA',
+      'android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION']) {
     if (!s.contains(perm)) {
       s = s.replaceFirst('<application', '<uses-permission android:name="$perm"/>\n    <application');
     }
@@ -38,7 +39,7 @@ void _android() {
     }
   }
   f.writeAsStringSync(s);
-  stdout.writeln('Android manifest: camera, internet, local http, browser links.');
+  stdout.writeln('Android manifest: camera, location (GPS runs), internet, local http, browser links.');
 
   for (final name in ['android/app/build.gradle.kts', 'android/app/build.gradle']) {
     final g = File(name);
@@ -64,6 +65,8 @@ void _ios() {
   final adds = <String, String>{
     'NSCameraUsageDescription':
         '<key>NSCameraUsageDescription</key>\n\t<string>DeepFit uses the camera to track your body during fitness tests and to check that you are the registered athlete.</string>',
+    'NSLocationWhenInUseUsageDescription':
+        '<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>DeepFit uses GPS to measure the distance and time of the 600 m run while you carry the phone.</string>',
     'NSAppTransportSecurity':
         '<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>\n\t\t<key>NSAllowsLocalNetworking</key>\n\t\t<true/>\n\t</dict>',
     'NSLocalNetworkUsageDescription':
@@ -78,7 +81,7 @@ void _ios() {
     s = s.substring(0, end) + extra.toString() + s.substring(end);
     plist.writeAsStringSync(s);
   }
-  stdout.writeln('iOS Info.plist: camera text, local network.');
+  stdout.writeln('iOS Info.plist: camera, location (GPS runs), local network.');
 
   final pod = File('ios/Podfile');
   if (pod.existsSync()) {
