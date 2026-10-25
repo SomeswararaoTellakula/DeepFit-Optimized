@@ -226,8 +226,8 @@ def _targets(key: str, ath: Dict) -> Dict:
     return out
 
 
-def _next_key(latest: Dict) -> Optional[str]:
-    for k in XB.RECOMMENDED:
+def _next_key(latest: Dict, ath: Optional[Dict] = None) -> Optional[str]:
+    for k in XB.test_keys(ath, latest):
         if k not in latest:
             return k
     return None
@@ -315,7 +315,7 @@ def hub(ath):
     mode = request.args.get("mode") if request.args.get("mode") in XB.MODES else "standard"
     latest = XB._latest_by_exercise(ath)
     tests = []
-    for k in XB.RECOMMENDED:
+    for k in XB.test_keys(ath, latest):
         if k == "height_weight":
             info = dict(XB.HEIGHT_WEIGHT_CARD)
             info.update({"camera": "none", "duration": None, "metric": "height", "unit": "cm",
@@ -336,7 +336,7 @@ def hub(ath):
                             "when": str(last.get("timestamp", ""))[:10]}
         tests.append(info)
     hp = potential.hidden_potential(latest, ath.get("age"), ath.get("gender"), _population(mode))
-    nk = _next_key(latest)
+    nk = _next_key(latest, ath)
     return _ok(athlete=_public(ath), tests=tests, done=sum(1 for t in tests if t.get("last")), total=len(tests),
                next_test=nk, hidden_potential=hp, height_cm=_height_for(ath), require_face=REQUIRE_FACE_CHECK,
                face_hidden_seconds=FACE_HIDDEN_SECONDS, engine_t0=T0)
@@ -690,7 +690,7 @@ def _out(doc: Dict, ath: Dict) -> Dict:
         out["passport_url"] = f"{_base_url()}/passport/r/{doc['_id']}/{doc['passport']['token']}"
         out["athlete_passport_url"] = f"{_base_url()}/passport/a/{doc['passport']['athlete_token']}"
     latest = XB._latest_by_exercise(ath)
-    out["next_test"] = _next_key(latest)
+    out["next_test"] = _next_key(latest, ath)
     return json.loads(json.dumps(out, default=str))
 
 
@@ -728,7 +728,7 @@ def height_weight(ath):
             "total_instances": int(_num(m.get("photos_used"), 0, 50) or 0), "method": f"phone camera + {m.get('reference') or 'reference'}",
             "timestamp": now})
     return _ok(status="saved", bmi=info["bmi"], bmi_category=info.get("bmi_category"), bmi_note=info.get("bmi_note"),
-               height_cm=round(h, 1), weight_kg=round(w, 1), next_test=_next_key(XB._latest_by_exercise(ath)))
+               height_cm=round(h, 1), weight_kg=round(w, 1), next_test=_next_key(XB._latest_by_exercise(ath), ath))
 
 
 @mobile_bp.route("/height_weight/measure", methods=["POST"])

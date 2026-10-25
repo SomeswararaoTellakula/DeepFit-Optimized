@@ -18,7 +18,6 @@ class HomeScreen extends StatelessWidget {
     final tests = state.tests;
     final hp = (state.hub?['hidden_potential'] as Map?)?.cast<String, dynamic>();
     final nextKey = state.hub?['next_test'] as String?;
-    final next = nextKey == null ? null : state.test(nextKey);
     final done = (state.hub?['done'] ?? 0) as num, total = (state.hub?['total'] ?? tests.length) as num;
     final passportUrl = state.athlete?['passport_url'] as String?;
 
@@ -68,21 +67,6 @@ class HomeScreen extends StatelessWidget {
               ]),
             ),
             const PendingBanner(),
-            if (next != null)
-              Panel(
-                borderColor: DeepFitColors.cyan,
-                child: Row(children: [
-                  Text(next.icon, style: const TextStyle(fontSize: 34)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('NEXT TEST', style: TextStyle(color: DeepFitColors.cyan, fontSize: 12, fontWeight: FontWeight.w800)),
-                      Text(next.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                    ]),
-                  ),
-                  FilledButton(onPressed: () => _open(context, next), child: const Text('Start')),
-                ]),
-              ),
             if (state.test('coachability') != null) _CoachabilityCard(info: state.test('coachability')!),
             if (hp != null) _PotentialCard(hp: hp, passportUrl: passportUrl),
             const SectionTitle('All tests'),
@@ -94,7 +78,7 @@ class HomeScreen extends StatelessWidget {
                 ]),
               ),
             for (final t in tests)
-              if (t.key != 'coachability') _TestTile(info: t), // has its own card above
+              if (t.key != 'coachability') _TestTile(info: t, isNext: t.key == nextKey), // one tile per test; the next one is marked
           ],
         ),
       ),
@@ -203,13 +187,15 @@ class _PotentialCard extends StatelessWidget {
 
 class _TestTile extends StatelessWidget {
   final TestInfo info;
-  const _TestTile({required this.info});
+  final bool isNext;
+  const _TestTile({required this.info, this.isNext = false});
 
   @override
   Widget build(BuildContext context) {
     final last = info.last;
     return Panel(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      borderColor: isNext ? DeepFitColors.cyan : null,
       child: InkWell(
         onTap: () => HomeScreen._open(context, info),
         child: Row(children: [
@@ -217,6 +203,8 @@ class _TestTile extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (isNext)
+                const Text('NEXT TEST', style: TextStyle(color: DeepFitColors.cyan, fontSize: 11, fontWeight: FontWeight.w800)),
               Text(info.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               const SizedBox(height: 2),
               Text(

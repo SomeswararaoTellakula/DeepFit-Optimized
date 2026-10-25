@@ -15,6 +15,10 @@
     .progress-fill { height: 100%; background: linear-gradient(90deg, #06b6d4, #22c55e); }
     .next-btn { display: inline-block; margin-top: .5rem; padding: .9rem 1.4rem; border-radius: 12px; font-size: 1.1rem;
                 font-weight: 800; background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; text-decoration: none; }
+    .test-card.next-up { outline: 3px solid #22d3ee; box-shadow: 0 0 0 6px rgba(34, 211, 238, .18); position: relative; }
+    .next-tag { display: inline-block; background: #22d3ee; color: #04121f; font-weight: 800; font-size: .72rem;
+                letter-spacing: .06em; padding: .15rem .45rem; border-radius: 6px; }
+    .test-card.next-up > .next-tag { position: absolute; top: .6rem; right: .6rem; }
     .next-btn:focus-visible, .test-card a:focus-visible { outline: 3px solid #fde047; outline-offset: 2px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
     .test-card { background: #071730; border: 1px solid #1e3a5f; border-radius: 16px; padding: 1.1rem; display: flex;
@@ -119,8 +123,7 @@
         <h2 id="progress-title" style="font-size:1.2rem;margin:0">Your progress: {{ done }} of {{ total }} tests done</h2>
         <div class="progress-track"><div class="progress-fill" style="width: {{ (100 * done / total)|round|int }}%"></div></div>
         {% if next_test %}
-        <p style="margin:.4rem 0 0">Recommended next test (Khelo India order first):</p>
-        <a class="next-btn" href="{{ next_test.url }}" id="next-test-link">▶ Start: {{ next_test.name }}</a>
+        <p style="margin:.4rem 0 0">Recommended next test (Khelo India order first): <b>{{ next_test.name }}</b> - marked <span class="next-tag">NEXT</span> below.</p>
         {% else %}
         <p style="margin:.4rem 0 0">🎉 You've completed every test. See your report below, or ask the AI Coach about it.</p>
         {% endif %}
@@ -132,7 +135,9 @@
 
     <div class="grid" role="list">
         {% for c in cards if c.key != 'coachability' %}
-        <article class="test-card {{ 'done' if c.last }}" role="listitem" aria-label="{{ c.name }}">
+        {% set is_next = next_test and next_test.key == c.key %}
+        <article class="test-card {{ 'done' if c.last }} {{ 'next-up' if is_next }}" role="listitem" aria-label="{{ c.name }}{{ ' (recommended next)' if is_next }}">
+            {% if is_next %}<span class="next-tag">NEXT</span>{% endif %}
             <div class="icon" aria-hidden="true">{{ c.icon }}</div>
             <h3>{{ c.name }}</h3>
             <div class="badges">
@@ -146,7 +151,7 @@
                 <span style="color:#64748b">({{ c.last.when }})</span></div>
             {% endif %}
             {% if c.available %}
-            <a class="go {{ 'retake' if c.last }}" href="{{ c.url }}">{{ 'Retake' if c.last else 'Start' }} {{ c.name }}</a>
+            <a class="go {{ 'retake' if c.last }}" href="{{ c.url }}"{% if is_next %} id="next-test-link"{% endif %}>{{ 'Retake' if c.last else 'Start' }} {{ c.name }}</a>
             {% else %}
             <div class="na">Needs a standard account (uses the existing height & weight page).</div>
             {% endif %}
@@ -184,7 +189,7 @@
         const done = [...document.querySelectorAll('.test-card.done h3')].map(h => h.textContent);
         const next = document.getElementById('next-test-link');
         const text = `You have done {{ done }} of {{ total }} tests. ` + (done.length ? `Done: ${done.join(', ')}. ` : '') +
-            (next ? `${next.textContent.replace('▶', '')}. Press Enter to start it.` : 'All tests are complete.');
+            (next ? `Next: ${next.textContent.replace(/^\s*(Start|Retake)\s*/, '')}. Press Enter to start it.` : 'All tests are complete.');
         speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text));
         if (next) next.focus();
     });

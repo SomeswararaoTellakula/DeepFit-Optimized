@@ -21,7 +21,7 @@ import math
 import threading
 import time
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import cv2
 from flask import Blueprint, Response, abort, jsonify, render_template, request, session
@@ -50,6 +50,22 @@ RECOMMENDED = ["height_weight", "growth_measures", "partial_curlup", "pushups", 
                "flamingo_balance", "plate_tapping", "coachability",
                "situps", "plank", "squats", "jumping_jacks", "vertical_jump", "broad_jump", "dumbbell_curls",
                "dash_50m", "run_600m"]
+PUSHUP_VARIANTS = ("pushups", "pushups_modified")
+
+
+def test_keys(ath: Optional[Dict] = None, latest: Optional[Dict] = None) -> List[str]:
+    """RECOMMENDED with one card per exercise: push-ups shows ONE variant - the one the athlete already did,
+    else the Khelo India rule (girls: modified / knees, boys: full push-ups)."""
+    latest = latest or {}
+    done = [k for k in PUSHUP_VARIANTS if k in latest]
+    if len(done) == 1:
+        pick = done[0]
+    else:
+        g = str((ath or {}).get("gender") or "").strip().lower()
+        pick = "pushups_modified" if g in ("f", "female", "girl", "woman") else "pushups"
+    return [k for k in RECOMMENDED if k not in PUSHUP_VARIANTS or k == pick]
+
+
 HEIGHT_WEIGHT_CARD = {
     "key": "height_weight", "name": "Height & Weight (BMI)", "icon": "📏", "category": "body composition",
     "khelo_india": True, "camera": "front", "url": "/ex/height_weight", "metric": "bmi", "unit": "",
@@ -237,10 +253,11 @@ def _latest_by_exercise(ath: Dict) -> Dict[str, Dict]:
 
 
 def _next_test(ath: Dict, mode: str, just_done: Optional[str] = None) -> Optional[Dict]:
-    done = set(_latest_by_exercise(ath))
+    latest = _latest_by_exercise(ath)
+    done = set(latest)
     if just_done:
         done.add(just_done)
-    for k in RECOMMENDED:
+    for k in test_keys(ath, latest):
         if k in done:
             continue
         cls = EE.EXERCISES[k]
@@ -386,7 +403,7 @@ def tests_hub():
     mode = _mode()
     cards = []
     latest = _latest_by_exercise(ath) if ath else {}
-    for k in RECOMMENDED:
+    for k in test_keys(ath, latest):
         info = EE.EXERCISES[k].info()
         info["url"] = f"/ex/{k}?mode={mode}"
         info["available"] = True
