@@ -51,6 +51,7 @@ RECOMMENDED = ["height_weight", "growth_measures", "partial_curlup", "pushups", 
                "situps", "plank", "squats", "jumping_jacks", "vertical_jump", "broad_jump", "dumbbell_curls",
                "dash_50m", "run_600m"]
 PUSHUP_VARIANTS = ("pushups", "pushups_modified")
+HOME_TESTS = ("height_weight", "situps", "vertical_jump", "dumbbell_curls")   # started from the home page buttons
 
 
 def test_keys(ath: Optional[Dict] = None, latest: Optional[Dict] = None) -> List[str]:
@@ -409,6 +410,7 @@ def tests_hub():
         info["available"] = True
         if k == "height_weight":
             info["metric"] = "bmi"
+        info["on_home"] = k in HOME_TESTS
         last = latest.get(k)
         if last:
             info["last"] = {"value": last.get("value"), "unit": last.get("unit"),
@@ -420,7 +422,7 @@ def tests_hub():
     if ath:
         hp = potential.hidden_potential(latest, ath.get("age"), ath.get("gender"),
                                         mode if mode in benchmarks.POPULATIONS else "standard")
-    return render_template("tests.html", athlete=ath, cards=cards, mode=mode, done=done, total=len(cards),
+    return render_template("tests.html", athlete=ath, cards=cards, mode=mode, done=done, total=len(cards), home_tests=HOME_TESTS,
                            next_test=_next_test(ath, mode) if ath else None, hp=hp,
                            passport_url=f"/passport/a/{passport.athlete_token(ath['ref'])}" if ath else None)
 

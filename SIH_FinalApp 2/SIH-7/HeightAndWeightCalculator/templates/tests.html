@@ -123,7 +123,12 @@
         <h2 id="progress-title" style="font-size:1.2rem;margin:0">Your progress: {{ done }} of {{ total }} tests done</h2>
         <div class="progress-track"><div class="progress-fill" style="width: {{ (100 * done / total)|round|int }}%"></div></div>
         {% if next_test %}
+        {% if next_test.key in home_tests %}
+        <p style="margin:.4rem 0 0">Recommended next test (Khelo India order first): <b>{{ next_test.name }}</b> - its button is on the
+            <a href="/" id="next-test-link" data-name="{{ next_test.name }}" data-where="home" style="color:#67e8f9;font-weight:700">Home page</a>.</p>
+        {% else %}
         <p style="margin:.4rem 0 0">Recommended next test (Khelo India order first): <b>{{ next_test.name }}</b> - marked <span class="next-tag">NEXT</span> below.</p>
+        {% endif %}
         {% else %}
         <p style="margin:.4rem 0 0">🎉 You've completed every test. See your report below, or ask the AI Coach about it.</p>
         {% endif %}
@@ -134,7 +139,7 @@
     {% endif %}
 
     <div class="grid" role="list">
-        {% for c in cards if c.key != 'coachability' %}
+        {% for c in cards if c.key != 'coachability' and not c.on_home %}
         {% set is_next = next_test and next_test.key == c.key %}
         <article class="test-card {{ 'done' if c.last }} {{ 'next-up' if is_next }}" role="listitem" aria-label="{{ c.name }}{{ ' (recommended next)' if is_next }}">
             {% if is_next %}<span class="next-tag">NEXT</span>{% endif %}
@@ -189,7 +194,10 @@
         const done = [...document.querySelectorAll('.test-card.done h3')].map(h => h.textContent);
         const next = document.getElementById('next-test-link');
         const text = `You have done {{ done }} of {{ total }} tests. ` + (done.length ? `Done: ${done.join(', ')}. ` : '') +
-            (next ? `Next: ${next.textContent.replace(/^\s*(Start|Retake)\s*/, '')}. Press Enter to start it.` : 'All tests are complete.');
+            (next ? (next.dataset.where === 'home'
+                     ? `Next: ${next.dataset.name}. Its button is on the Home page. Press Enter to go there.`
+                     : `Next: ${next.textContent.replace(/^\s*(Start|Retake)\s*/, '')}. Press Enter to start it.`)
+                  : 'All tests are complete.');
         speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text));
         if (next) next.focus();
     });
