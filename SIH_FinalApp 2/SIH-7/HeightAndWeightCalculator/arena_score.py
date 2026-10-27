@@ -72,7 +72,9 @@ def score_dodge(trials: List[Dict]):
     peaks = [p for p in (_num(t.get("peak_v"), 0, 15) for t in ok) if p is not None]
     success = len(ok) / len(trials)
     reflex = round(100 * _clamp01((900 - median(rts)) / 650), 1) if rts else None
-    agility = round(100 * (0.5 * success + 0.5 * _clamp01((median(peaks) if peaks else 0) / 4.0)), 1)
+    # peak sideways speed in shoulder widths a second, read only from new camera frames: a quick sidestep is about
+    # 4-6, a very fast one 8+ (a repeated frame used to inflate it, so the old /4 scale gave nearly everyone full marks)
+    agility = round(100 * (0.5 * success + 0.5 * _clamp01((median(peaks) if peaks else 0) / 8.0)), 1)
     return reflex, agility, {"trials": len(trials), "dodged": len(ok), "median_reaction_ms": round(median(rts)) if rts else None,
                              "median_peak_speed_sw_s": round(median(peaks), 2) if peaks else None}
 

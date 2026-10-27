@@ -118,6 +118,7 @@
             {{ maturity.status }} developer ({{ maturity.maturity_offset }} yrs from growth spurt)</p>
         {% endif %}
         {% if p.coach_timed %}<p style="margin:10px 0 0;color:#64748b;font-size:.85rem">Coach-timed with a stopwatch.</p>{% elif p.timing == 'gps' %}<p style="margin:10px 0 0;color:#64748b;font-size:.85rem">Timed by the phone: GPS + step count{% if p.run_verdict == 'needs_recheck' %} - flagged for a re-check{% endif %}.</p>{% endif %}
+        {% if p.identity_scope|who_ran %}<p style="margin:4px 0 0;color:#64748b;font-size:.85rem">Who: {{ p.identity_scope|who_ran }}</p>{% endif %}
         {% if p.identity.captured_on %}<p style="margin:10px 0 0;color:#64748b;font-size:.85rem">📱 Captured on the {{ p.identity.captured_on }}.</p>{% endif %}
     {% else %}
         <div class="lbl">Athlete</div>

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}DeepFit - How accurate is it?{% endblock %}
+
+{% block extra_css %}
+<style>
+    .val-wrap { max-width: 1100px; margin: 0 auto; padding: 96px 16px 48px; color: #e6f0ff; }
+    .val-panel { background: rgba(2, 6, 23, .88); border: 1px solid #1e3a5f; border-radius: 18px; padding: 1.4rem 1.2rem; }
+    .val-wrap h1 { font-weight: 800; color: #22d3ee; }
+    .val-wrap h2 { font-size: 1.25rem; margin-top: 2rem; color: #c4b5fd; }
+    .val-wrap p, .val-wrap li { color: #cbd5e1; }
+    .val-table { width: 100%; border-collapse: collapse; margin-top: .6rem; font-size: .95rem; }
+    .val-table th, .val-table td { padding: .5rem .6rem; border-bottom: 1px solid #1e293b; text-align: left; }
+    .val-table th { color: #94a3b8; font-weight: 700; }
+    .val-table td.num { font-variant-numeric: tabular-nums; }
+    .badge-sim { display: inline-block; background: #422006; color: #fcd34d; border: 1px solid #a16207; border-radius: 8px;
+                 padding: .1rem .5rem; font-size: .8rem; font-weight: 700; margin-left: .4rem; }
+    .badge-real { display: inline-block; background: #052e16; color: #86efac; border: 1px solid #15803d; border-radius: 8px;
+                  padding: .1rem .5rem; font-size: .8rem; font-weight: 700; margin-left: .4rem; }
+    .scroll { overflow-x: auto; }
+    .muted { color: #64748b !important; font-size: .85rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="val-wrap"><div class="val-panel">
+    <h1>How accurate is DeepFit?</h1>
+    <p>Every number here is the app's result compared with a person measuring the same attempt by hand -
+       counting reps, timing with a stopwatch or measuring with a tape. Nothing on this page is estimated or made up.</p>
+
+    <h2>Checked against real people <span class="badge-real">REAL</span></h2>
+    {% if stats.tests %}
+    <div class="scroll">
+    <table class="val-table">
+        <thead><tr><th>Test</th><th>Results checked</th><th>Agrees with the hand value</th><th>Average difference</th>
+            <th>Bias (app − hand)</th><th>Largest difference</th></tr></thead>
+        <tbody>
+        {% for r in stats.tests %}
+        <tr><td>{{ r.name }}</td><td class="num">{{ r.n }}</td>
+            <td class="num">{{ r.agree_pct }}% <span class="muted">({% if r.tolerance %}within {{ '%g' % r.tolerance }} {{ r.unit }}{% else %}exact{% endif %})</span></td>
+            <td class="num">{{ '%g' % r.mean_abs }} {{ r.unit }}</td><td class="num">{{ '%+g' % r.bias }} {{ r.unit }}</td>
+            <td class="num">{{ '%+g' % r.worst }} {{ r.unit }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="muted">{{ stats.results_checked }} results checked by hand so far.</p>
+    {% else %}
+    <p>No results have been checked by hand yet. After a test, enter your own count in the box under the result.</p>
+    {% endif %}
+
+    <h2>How to check it yourself (10 minutes)</h2>
+    <ol>
+        <li>One person does the test; a second person watches and counts by hand (or times with a stopwatch, or measures with a tape).</li>
+        <li>When the result appears, type the hand value into the box under it and press Save.</li>
+        <li>Repeat with 8-10 different people and different phones - the table above fills in by itself.</li>
+    </ol>
+
+    <h2>Stress test with simulated people <span class="badge-sim">SIMULATED - NOT REAL PEOPLE</span></h2>
+    <p id="sim-note" class="muted"></p>
+    <div class="scroll"><table class="val-table" id="sim-table"><thead><tr><th>Test</th><th>Trials</th>
+        <th>Before the fixes</th><th>Now</th></tr></thead><tbody></tbody></table></div>
+
+    <div id="arena-sim" hidden>
+    <h2>Arena games, simulated players <span class="badge-sim">SIMULATED - NOT REAL PEOPLE</span></h2>
+    <p id="arena-note" class="muted"></p>
+    <div class="scroll"><table class="val-table" id="arena-table"><thead><tr><th>Game</th><th>What is measured</th>
+        <th>Before the fixes</th><th>Now</th></tr></thead><tbody></tbody></table></div>
+    </div>
+</div></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    fetch('/static/validation_sim.json').then((r) => r.json()).then((d) => {
+        document.getElementById('sim-note').textContent = d.note;
+        const names = {situps: 'Sit-ups', partial_curlup: 'Partial Curl-up', pushups: 'Push-ups', pushups_modified: 'Modified Push-ups',
+            plank: 'Plank Hold', squats: 'Squats', jumping_jacks: 'Jumping Jacks', dumbbell_curls: 'Dumbbell Curls',
+            vertical_jump: 'Vertical Jump', broad_jump: 'Standing Broad Jump', sit_and_reach: 'Sit and Reach',
+            flamingo_balance: 'Flamingo Balance', plate_tapping: 'Plate Tapping'};
+        const unit = (r) => r.kind === 'cm' ? ' cm' : (String(r.kind).startsWith('seconds') ? ' s' : '');
+        const fmt = (r, exact, err) => r.kind === 'count' ? `${exact}% exact count` : `average error ${err}${unit(r)}`;
+        const tb = document.querySelector('#sim-table tbody');
+        d.rows.forEach((r) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${names[r.key] || r.key}</td><td class="num">${r.trials}</td>` +
+                `<td class="num">${r.old_mean_err == null ? '–' : fmt(r, r.old_exact_pct, r.old_mean_err)}</td>` +
+                `<td class="num"><b>${fmt(r, r.exact_pct, r.mean_err)}</b></td>`;
+            tb.appendChild(tr);
+        });
+        if (d.arena && d.arena.rows) {
+            document.getElementById('arena-note').textContent = d.arena.note;
+            const ab = document.querySelector('#arena-table tbody');
+            d.arena.rows.forEach((r) => {
+                const tr = document.createElement('tr');
+                [r.game, r.measure, r.before, r.now].forEach((v, i) => {
+                    const td = document.createElement('td'); if (i >= 2) td.className = 'num';
+                    if (i === 3) { const b = document.createElement('b'); b.textContent = v; td.appendChild(b); } else td.textContent = v;
+                    if (i === 1) { const n = document.createElement('div'); n.className = 'muted'; n.textContent = r.trials; td.appendChild(n); }
+                    tr.appendChild(td);
+                });
+                ab.appendChild(tr);
+            });
+            document.getElementById('arena-sim').hidden = false;
+        }
+    }).catch(() => {});
+</script>
+{% endblock %}

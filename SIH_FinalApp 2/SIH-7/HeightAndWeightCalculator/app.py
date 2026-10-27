@@ -928,6 +928,15 @@ def performance_dashboard():
         return redirect(url_for('login', next='performance_dashboard'))
     return render_template('performance_dashboard.html')
 
+def _pct_or_none(v):
+    """'95%' / 95 / 0.95 -> 0.95; text such as 'camera, about ±1 cm' -> None (no invented confidence)."""
+    try:
+        x = float(str(v).replace('%', '').strip())
+    except (TypeError, ValueError):
+        return None
+    return x / 100 if x > 1 else x
+
+
 @app.route('/api/get_latest_measurement')
 def get_latest_measurement():
     """API endpoint to get the latest measurement data"""
@@ -969,7 +978,7 @@ def get_latest_measurement():
                     'confidence_level': final_estimate.get('confidence_level'),
                     'total_instances': final_estimate.get('total_instances'),
                     'timestamp': final_estimate.get('timestamp'),
-                    'confidence_score': float(final_estimate.get('confidence_level', '80%').replace('%', '')) / 100
+                    'confidence_score': _pct_or_none(final_estimate.get('confidence_level'))
                 }
             })
         else:
@@ -1003,86 +1012,11 @@ def get_latest_measurement():
         else:
             print("No latest measurement found")
         
-        # Try to get from JSON files as fallback
-        try:
-            import glob
-            import json
-            from pathlib import Path
-            
-            # Check measurements folder
-            measurements_dir = Path('measurements')
-            if measurements_dir.exists():
-                json_files = list(measurements_dir.glob('*.json'))
-                if json_files:
-                    # Get the most recent file
-                    latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
-                    with open(latest_file, 'r') as f:
-                        data = json.load(f)
-                    
-                    # Calculate BMI if not present
-                    bmi = None
-                    if data.get('height_cm') and data.get('weight_kg'):
-                        height_m = data['height_cm'] / 100
-                        bmi = data['weight_kg'] / (height_m ** 2)
-                    
-                    return jsonify({
-                        'success': True,
-                        'data': {
-                            'height_cm': data.get('height_cm'),
-                            'weight_kg': data.get('weight_kg'),
-                            'confidence_score': data.get('confidence_score', 0.8),
-                            'uncertainty_height': 2.5,
-                            'uncertainty_weight': 3.0,
-                            'timestamp': data.get('timestamp'),
-                            'bmi': bmi,
-                            'calibration_quality': 5.0
-                        }
-                    })
-            
-            # Check validation results folder
-            validation_dir = Path('validation_results/Height and Weight')
-            if validation_dir.exists():
-                json_files = list(validation_dir.glob('performance_metrics_*.json'))
-                if json_files:
-                    latest_file = max(json_files, key=lambda f: f.stat().st_mtime)
-                    with open(latest_file, 'r') as f:
-                        data = json.load(f)
-                    
-                    return jsonify({
-                        'success': True,
-                        'data': {
-                            'height_cm': data.get('height_cm'),
-                            'weight_kg': data.get('weight_kg'),
-                            'confidence_score': data.get('confidence_score', 0.8),
-                            'uncertainty_height': data.get('uncertainty_height', 2.5),
-                            'uncertainty_weight': data.get('uncertainty_weight', 3.0),
-                            'timestamp': data.get('timestamp'),
-                            'bmi': data.get('bmi'),
-                            'calibration_quality': data.get('calibration_quality', 5.0),
-                            'processing_time_ms': data.get('processing_time_ms')
-                        }
-                    })
-        
-        except Exception as file_error:
-            print(f"Error reading measurement files: {file_error}")
-        
-        # If no data found, return sample data based on your screenshots
-        print("No measurement data found, returning sample data")
-        return jsonify({
-            'success': True,
-            'data': {
-                'final_height_cm': 180.1582,
-                'final_weight_kg': 74.2911,
-                'bmi': 22.90,
-                'height_uncertainty': 0.7071,
-                'weight_uncertainty': 1.4142,
-                'confidence_level': '49.2%',
-                'total_instances': 2,
-                'timestamp': '2025-01-15T10:30:00Z',
-                'confidence_score': 0.492
-            }
-        })
-        
+        # No measurement for this athlete. (Old fallbacks read the newest file on the server - someone else's
+        # measurement - or returned sample numbers; both are gone: we never show numbers that aren't theirs.)
+        return jsonify({'success': False, 'error': 'No height & weight measurement yet',
+                        'next_url': '/ex/height_weight'})
+
     except Exception as e:
         print(f"Error getting latest measurement: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500

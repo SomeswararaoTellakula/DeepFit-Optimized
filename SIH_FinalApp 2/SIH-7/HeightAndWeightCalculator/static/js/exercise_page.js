@@ -481,6 +481,30 @@
         }
         const pl = $('passport-line');
         if (r.passport_url) { pl.style.display = ''; $('passport-link').href = r.passport_url; } else pl.style.display = 'none';
+        // optional hand check: what a person counted / timed / measured, kept next to the result for /validation
+        const hc = $('hand-check'), pr = r.hand_check_prompt;
+        if (pr && r.result_id && r.passport) {
+            hc.style.display = '';
+            $('hc-label').textContent = pr.label + '. Type it here to compare with the app.';
+            $('hc-unit').textContent = pr.unit;
+            $('hc-value').value = '';
+            $('hc-status').textContent = '';
+            $('hc-save').onclick = async () => {
+                const v = $('hc-value').value;
+                if (v === '') { $('hc-status').textContent = 'Type the number first.'; return; }
+                $('hc-save').disabled = true;
+                try {
+                    const res = await fetch('/api/hand_check', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rid: r.result_id, tok: r.passport.token, value: Number(v) }) });
+                    const d = await res.json();
+                    $('hc-status').textContent = d.ok
+                        ? (d.agrees ? `✓ Saved - the app (${d.app}) agrees with your ${d.hand} ${d.unit}.`
+                                    : `Saved - the app said ${d.app}, you measured ${d.hand} ${d.unit} (difference ${d.difference > 0 ? '+' : ''}${d.difference}).`)
+                        : (d.error || 'Could not save.');
+                } catch (e) { $('hc-status').textContent = 'Could not save - check the connection.'; }
+                $('hc-save').disabled = false;
+            };
+        } else hc.style.display = 'none';
         const next = r.next_test;
         nextUrl = next ? next.url : `/tests?mode=${mode}`;
         $('next-btn').textContent = next ? `Next: ${next.name} →` : 'All tests done - see report →';

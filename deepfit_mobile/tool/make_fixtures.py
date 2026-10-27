@@ -77,10 +77,14 @@ def squat(knee_deg):
 def jj(open_):
     lm = blank()
     setpt(lm, E.L_SHOULDER, 0.45, 0.35); setpt(lm, E.R_SHOULDER, 0.55, 0.35)
-    if open_:
+    setpt(lm, E.NOSE, 0.5, 0.25)
+    setpt(lm, E.L_HIP, 0.47, 0.6); setpt(lm, E.R_HIP, 0.53, 0.6)
+    if open_:            # arms overhead: elbows halfway up, same bone lengths as arms down
+        setpt(lm, E.L_ELBOW, 0.41, 0.275); setpt(lm, E.R_ELBOW, 0.59, 0.275)
         setpt(lm, E.L_WRIST, 0.38, 0.2); setpt(lm, E.R_WRIST, 0.62, 0.2)
         setpt(lm, E.L_ANKLE, 0.38, 0.9); setpt(lm, E.R_ANKLE, 0.62, 0.9)
     else:
+        setpt(lm, E.L_ELBOW, 0.445, 0.475); setpt(lm, E.R_ELBOW, 0.555, 0.475)
         setpt(lm, E.L_WRIST, 0.44, 0.6); setpt(lm, E.R_WRIST, 0.56, 0.6)
         setpt(lm, E.L_ANKLE, 0.48, 0.9); setpt(lm, E.R_ANKLE, 0.52, 0.9)
     return lm
@@ -99,6 +103,7 @@ def stand(dx=0.0, dy=0.0, lift=0.0):
     for i, x in [(E.L_SHOULDER, 0.46), (E.R_SHOULDER, 0.54)]: setpt(lm, i, x + dx, 0.28 + dy)
     for i, x in [(E.L_HIP, 0.47), (E.R_HIP, 0.53)]: setpt(lm, i, x + dx, 0.55 + dy)
     setpt(lm, E.L_ANKLE, 0.47 + dx, 0.92 + dy - lift); setpt(lm, E.R_ANKLE, 0.53 + dx, 0.92 + dy)
+    setpt(lm, E.L_KNEE, 0.47 + dx, 0.735 + dy - lift / 2); setpt(lm, E.R_KNEE, 0.53 + dx, 0.735 + dy)   # knees move with the body
     for i in (E.L_WRIST, E.R_WRIST): setpt(lm, i, 0.5 + dx, 0.6 + dy)
     return lm
 
@@ -263,8 +268,10 @@ add("dumbbell_curls_5_5", "dumbbell_curls", seq)
 cpp = 170 * 0.88 / (0.77 * H)
 rise = 40 / cpp / H
 seq = [stand()] * 20
+flight = 2 * math.sqrt(2 * 40 / 981)          # a real 40 cm jump is ~0.57 s in the air (ballistic)
 for _ in range(3):
-    seq += [stand(dy=-rise * s) for s in (0.3, 0.7, 1.0, 0.8, 0.4, 0)] + [stand()] * 20
+    nf = int(flight * FPS) + 1
+    seq += [stand(dy=-rise * 4 * (i / (nf - 1)) * (1 - i / (nf - 1))) for i in range(nf)] + [stand()] * 20
 add("vertical_jump_3x40", "vertical_jump", seq, height_cm=170)
 d = 180 / cpp / W
 seq = [stand()] * 20
@@ -282,6 +289,22 @@ for _ in range(25):
     seq += [tap("left"), tap("mid"), tap("right"), tap("mid")]
 add("plate_tapping_25", "plate_tapping", seq)
 add("nobody", "situps", [None] * 8)
+
+# ---- realistic sessions from the stress test (tools/exercise_bench/exbench.py): turned cameras, jitter, hidden
+#      side, dropped frames, one-frame glitches, left/right swaps, uneven frame rate - the Dart engine must give the
+#      same answers here too
+sys.path.insert(0, os.path.join(APP, "tools", "exercise_bench"))
+import exbench as XB        # noqa: E402
+for _name, _k in [("situps", 1), ("partial_curlup", 4), ("pushups", 7), ("pushups_modified", 10), ("plank", 2),
+                  ("squats", 3), ("jumping_jacks", 4), ("dumbbell_curls", 1), ("vertical_jump", 5), ("broad_jump", 5),
+                  ("sit_and_reach", 11), ("flamingo_balance", 6), ("plate_tapping", 3)]:
+    _ex, _seq, _cam, _truth, _kind = XB.SCENARIOS[_name](random.Random(XB.trial_seed(_name, _k)))
+    _case = {"name": f"stress_{_name}_{_k}", "key": _name, "w": _cam.W, "h": _cam.Hh, "height_cm": round(_ex.height_cm, 1),
+             "inputs": None, "pattern": None, "code": None,
+             "frames": [[round(t, 4), None if lm is None else rnd_lm(lm)] for t, lm in _seq]}
+    _case["expect"] = expect(_case)
+    _case["truth"] = round(_truth, 2)
+    cases.append(_case)
 
 # ---- portrait phone frame (480 x 640) to make sure width/height are used the same way
 add("pushups_portrait", "pushups", cycle(lambda a: push(a), 170, 70, 3), w=480, h=640)

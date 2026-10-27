@@ -12,6 +12,7 @@ import 'py.dart';
 abstract final class L {
   static const nose = 0;
   static const lEye = 2, rEye = 5;
+  static const lEar = 7, rEar = 8;
   static const lShoulder = 11, rShoulder = 12;
   static const lElbow = 13, rElbow = 14;
   static const lWrist = 15, rWrist = 16;

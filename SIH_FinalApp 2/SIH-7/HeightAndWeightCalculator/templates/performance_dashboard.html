@@ -360,6 +360,7 @@
             <i class="fas fa-exclamation-triangle"></i>
             <h3>No Results Found</h3>
             <p>We couldn't find any measurement data. Please complete a measurement first.</p>
+            <p><a href="/ex/height_weight" style="color:#38bdf8;font-weight:700">Take the Height &amp; Weight test</a></p>
         </div>
 
         <div id="results" style="display: none;">
@@ -505,13 +506,15 @@
 
                     // Animate height
                     animateNumber(document.getElementById('height-value'), result.final_height_cm || result.height_cm);
-                    document.getElementById('height-uncertainty').textContent = 
-                        `Uncertainty: ±${(result.height_uncertainty || 2.0).toFixed(1)} cm`;
+                    const hu = result.height_uncertainty ?? result.uncertainty_height;
+                    document.getElementById('height-uncertainty').textContent =
+                        (typeof hu === 'number') ? `Uncertainty: ±${hu.toFixed(1)} cm` : (hu ? `Uncertainty: ${hu}` : '');
 
                     // Animate weight
                     animateNumber(document.getElementById('weight-value'), result.final_weight_kg || result.weight_kg);
-                    document.getElementById('weight-uncertainty').textContent = 
-                        `Uncertainty: ±${(result.weight_uncertainty || 3.0).toFixed(1)} kg`;
+                    const wu = result.weight_uncertainty ?? result.uncertainty_weight;
+                    document.getElementById('weight-uncertainty').textContent =
+                        (typeof wu === 'number') ? `Uncertainty: ±${wu.toFixed(1)} kg` : (wu ? `Uncertainty: ${wu}` : '');
 
                     // Calculate and display BMI
                     const height_m = (result.final_height_cm || result.height_cm) / 100;
@@ -524,22 +527,25 @@
                     bmiStatusElement.className = `bmi-status ${bmiInfo.class}`;
 
                     // Display confidence
-                    const confidence = (result.confidence_score || 0.8) * 100;
-                    animateNumber(document.getElementById('confidence-value'), confidence, '%');
-                    
-                    // Animate confidence bar
-                    setTimeout(() => {
-                        document.getElementById('confidence-fill').style.width = confidence + '%';
-                    }, 500);
+                    // only a confidence the measurement really reported - never a default
+                    if (typeof result.confidence_score === 'number') {
+                        const confidence = result.confidence_score * 100;
+                        animateNumber(document.getElementById('confidence-value'), confidence, '%');
+                        setTimeout(() => {
+                            document.getElementById('confidence-fill').style.width = confidence + '%';
+                        }, 500);
+                    } else {
+                        document.getElementById('confidence-value').textContent = result.confidence_level || '—';
+                    }
 
                     // Display statistics
                     document.getElementById('total-measurements').textContent = result.total_instances || 1;
                     document.getElementById('measurement-date').textContent = 
                         formatDate(result.timestamp || new Date().toISOString());
-                    document.getElementById('calibration-quality').textContent = 
-                        result.calibration_quality ? result.calibration_quality.toFixed(2) + 'px' : 'Good';
-                    document.getElementById('processing-time').textContent = 
-                        result.processing_time_ms ? Math.round(result.processing_time_ms) : '150';
+                    document.getElementById('calibration-quality').textContent =
+                        result.calibration_quality ? result.calibration_quality.toFixed(2) + 'px' : '—';
+                    document.getElementById('processing-time').textContent =
+                        result.processing_time_ms ? Math.round(result.processing_time_ms) : '—';
 
                     // Add pulse animation to cards
                     document.querySelectorAll('.result-card').forEach((card, index) => {

@@ -228,3 +228,172 @@ export class PunchDetector {
     return out;
   }
 }
+
+// ------------------------------------------------------------------ body measurements (shared by the game and its tests)
+// lm: 33 x {x, y, v}, normalised, UN-mirrored (as the camera sees). Results are in MIRRORED screen pixels, so
+// "move to the left of the screen" = "move to your own left".
+export function bodyInfo(lm, vw, vh) {
+  const P = (i) => ({ x: (1 - lm[i].x) * vw, y: lm[i].y * vh, v: lm[i].v });
+  const ls = P(11), rs = P(12), lh = P(23), rh = P(24), la = P(27), ra = P(28), nose = P(0), le = P(2), re = P(5);
+  const lk = P(25), rk = P(26);
+  const ank = (la.y + ra.y) / 2;
+  return {
+    hipX: (lh.x + rh.x) / 2, hipY: (lh.y + rh.y) / 2, shX: (ls.x + rs.x) / 2, shY: (ls.y + rs.y) / 2,
+    sw: Math.max(8, Math.abs(ls.x - rs.x)), nose, ankY: ank, bodyPx: ank - nose.y, lk, rk, la, ra,
+    torso: Math.hypot((lh.x + rh.x) / 2 - (ls.x + rs.x) / 2, (lh.y + rh.y) / 2 - (ls.y + rs.y) / 2),
+    full: [0, 23, 24, 27, 28].every((i) => lm[i].v >= 0.5),
+    upper: [0, 11, 12].every((i) => lm[i].v >= 0.5),          // head + shoulders (hips may be behind a desk)
+    face: [0, 2, 5].every((i) => lm[i].v >= 0.5), eyeDist: Math.hypot(le.x - re.x, le.y - re.y),
+  };
+}
+const med = (a) => { const s = [...a].sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2) : NaN; };
+
+// The detectors below are fed ONLY on new camera frames (the game loop runs at 60 Hz, a webcam at 10-30 fps: a
+// repeated frame would look like "no movement, then a jump" and would also fake the two-frames-agree checks).
+
+// Raider Dodge: reaction time = when the hips (raw points, no smoothing lag) cross 0.25 shoulder widths to either
+// side, confirmed by the next frame, with the moment interpolated between the two frames (a 10 fps camera is not
+// 100 ms "slower"); peak sideways speed over 0.12 s windows (start-to-end, so camera jitter doesn't add up);
+// dodged = the smoothed hips get 0.8 shoulder widths to the safe side.
+export class DodgeReader {
+  constructor({ onsetSw = 0.25, safeSw = 0.8, speedWinMs = 120 } = {}) { this.o = { onsetSw, safeSw, speedWinMs }; }
+  start(t0, safe, base) {        // safe: +1 = towards larger mirrored x
+    this.t0 = t0; this.safe = safe; this.base = base; this.onset = null; this.pend = null; this.prev = null;
+    this.hist = []; this.peak = 0; this.dodged = false; this.wrong = null;
+  }
+  feed(t, raw, sm) {
+    const b = this.base, sw = b.sw;
+    if (raw) {
+      const dr = raw.hipX - b.hipX, thr = this.o.onsetSw * sw;
+      if (!this.onset) {
+        if (Math.abs(dr) > thr) {
+          const dir = Math.sign(dr);
+          if (this.pend && this.pend.dir === dir) this.onset = this.pend;
+          else {
+            let tc = t;     // when it crossed: between the previous frame and this one
+            if (this.prev && Math.sign(this.prev.dr) === dir && Math.abs(this.prev.dr) < thr && t > this.prev.t)
+              tc = this.prev.t + (t - this.prev.t) * (thr - Math.abs(this.prev.dr)) / Math.max(1e-6, Math.abs(dr) - Math.abs(this.prev.dr));
+            else if (this.prev && t > this.prev.t && Math.abs(this.prev.dr) < thr)
+              tc = this.prev.t + (t - this.prev.t) * 0.5;
+            this.pend = { rt: tc - this.t0, dir };
+          }
+        } else this.pend = null;
+      }
+      // started the wrong way: the hips went 0.2 shoulder widths the wrong way, and were already heading that way
+      // on the frame before (so one jumpy frame can't say it), before getting past 0.25 to the safe side
+      if (this.wrong == null) {
+        if (dr * this.safe > thr) this.wrong = false;
+        else if (this.prev && -dr * this.safe > 0.8 * thr && -this.prev.dr * this.safe > 0.3 * thr) this.wrong = true;
+      }
+      this.prev = { t, dr };
+      this.hist.push({ t, x: raw.hipX });
+      this.hist = this.hist.filter((h) => t - h.t <= this.o.speedWinMs + 1);
+      const a = this.hist[0];
+      if (t - a.t >= this.o.speedWinMs * 0.75) this.peak = Math.max(this.peak, ((raw.hipX - a.x) / ((t - a.t) / 1000) / sw) * this.safe);
+    }
+    if (sm && (sm.hipX - b.hipX) * this.safe > this.o.safeSw * sw) this.dodged = true;
+    return this.dodged;
+  }
+  result() {
+    return { rt: this.onset ? Math.round(this.onset.rt) : null, wrong_first: !!this.wrong,
+             peak_v: +this.peak.toFixed(2), ok: this.dodged };
+  }
+}
+
+// Log Jump: how high the hips rose above where they were just before the log came. The top of the jump is found
+// by fitting the flight's free-fall curve (as the camera tests do), so it is right between frames and one bad
+// frame can't make a jump. Rising on the toes (< 8 cm) is not a jump.
+export class JumpMeter {
+  constructor({ minCm = 8 } = {}) { this.o = { minCm }; }
+  start(baseY, cmPerPx, torso = null) { this.baseY = baseY; this.cpp = cmPerPx; this.s = []; this.torso = torso; }
+  feed(t, raw) {
+    if (!raw) return;
+    // a hip put in the wrong place for a frame would look like a jump: the torso can't change length mid-jump
+    if (this.torso && (raw.torso < 0.75 * this.torso || raw.torso > 1.33 * this.torso)) return;
+    this.s.push({ t, v: (this.baseY - raw.hipY) * this.cpp });
+  }
+  live() { return this.s.length ? Math.max(0, med(this.s.slice(-3).map((p) => p.v))) : 0; }
+  result() {
+    const G = 981, vals = this.s.map((p) => p.v).sort((a, b) => a - b);
+    // the second-highest frame (one jumpy frame can't make a jump) - unless the camera gave only a few frames
+    const robust = vals.length >= 4 ? vals[vals.length - 2] : (vals.length ? vals[vals.length - 1] : 0);
+    let apex = robust, tPeak = null;
+    let pts = this.s.filter((p) => p.v >= 0.5 * robust && robust > 0);
+    // the curve fit is only for real flight: time spent above half the height must match free fall, and the fit
+    // may only add what a gap between two frames can hide (a slow rise on the toes is not a flight)
+    let gap = 0; for (let i = 1; i < this.s.length; i++) gap = Math.max(gap, (this.s[i].t - this.s[i - 1].t) / 1000);
+    const above = pts.length ? (pts[pts.length - 1].t - pts[0].t) / 1000 : 0;
+    const ballistic = robust > 0 && above <= 1.5 * 2 * Math.sqrt(robust / G) + gap;
+    const maxGain = 0.5 * G * (gap / 2) * (gap / 2) + 2;
+    if (!ballistic) pts = [];
+    for (let it = 0; it < 3 && pts.length >= 3; it++) {
+      const t0 = pts[0].t, xs = pts.map((p) => (p.t - t0) / 1000), ys = pts.map((p, i) => p.v + 0.5 * G * xs[i] * xs[i]);
+      const n = xs.length, mx = xs.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n;
+      const sxx = xs.reduce((a, x) => a + (x - mx) * (x - mx), 0); if (sxx <= 1e-9) break;
+      const b = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0) / sxx, a = my - b * mx;
+      const res = pts.map((p, i) => p.v - (a + b * xs[i] - 0.5 * G * xs[i] * xs[i]));
+      let worst = 0; res.forEach((r, i) => { if (Math.abs(r) > Math.abs(res[worst])) worst = i; });
+      if (Math.abs(res[worst]) > 5 && n > 3) { pts = pts.filter((_, i) => i !== worst); continue; }
+      const top = b / G;
+      if (top >= Math.min(...xs) - 0.1 && top <= Math.max(...xs) + 0.1) {
+        const ap = a + b * b / (2 * G);
+        if (ap >= robust - 3 && ap <= robust + maxGain) { apex = Math.max(ap, robust); tPeak = t0 + top * 1000; }
+      }
+      break;
+    }
+    if (tPeak == null && this.s.length) { const k = this.s.findIndex((p) => p.v === robust); tPeak = k >= 0 ? this.s[k].t : null; }
+    const cm = Math.max(0, apex);
+    return { ok: cm >= this.o.minCm && tPeak != null, cm: +cm.toFixed(1), tPeak };
+  }
+}
+
+// Read the Bowler: the player's answer = the first clear step (or lean, in the upper-body game) to one side,
+// seen in the smoothed AND the raw points on two new frames in a row (one jumpy frame can't answer).
+export class SideAnswer {
+  constructor({ thrSw = 0.45 } = {}) { this.o = { thrSw }; }
+  start(baseX, sw, thrSw = this.o.thrSw) { this.baseX = baseX; this.sw = sw; this.thr = thrSw; this.n = 0; this.dir = 0; this.answer = null; }
+  feed(t, rawX, smX) {
+    if (this.answer || rawX == null || smX == null) return this.answer;
+    const ds = smX - this.baseX, dr = rawX - this.baseX, lim = this.thr * this.sw;
+    const dir = Math.abs(ds) > lim && Math.abs(dr) > lim && Math.sign(ds) === Math.sign(dr) ? Math.sign(ds) : 0;
+    if (dir && dir === this.dir) this.n++; else { this.dir = dir; this.n = dir ? 1 : 0; }
+    if (this.n >= 2) this.answer = { side: dir < 0 ? 'L' : 'R', t };
+    return this.answer;
+  }
+}
+
+// Bull Run: a step = the knees swap which one is higher. Fed the RAW points of each new frame (smoothing lags
+// and flattens fast knees). Two pose-model mistakes are undone first:
+//  - left/right mix-up: running on the spot the knees never cross sideways, so they are put back in the
+//    left-right order they had over the last ~30 frames;
+//  - a knee or ankle put in the wrong place: the shin (knee to ankle) keeps its length when a knee is lifted
+//    (the thigh doesn't - it points at the camera), so a frame whose shin suddenly changes length is skipped.
+// Feed it while the player gets ready too (counting = false): it learns the shin lengths and the knee order.
+export class StepCounter {
+  constructor() { this.steps = 0; this.sign = 0; this.order = []; this.shL = []; this.shR = []; }
+  feed(t, body, bodyPx, counting = true) {
+    if (!body || !body.la || !body.ra) return false;
+    let lk = body.lk, rk = body.rk, la = body.la, ra = body.ra;
+    if (Math.min(lk.v ?? 1, rk.v ?? 1) < 0.3) return false;                      // knees not really seen
+    const feetSeen = Math.min(la.v ?? 1, ra.v ?? 1) >= 0.3;
+    const sx = Math.sign(lk.x - rk.x);
+    if (Math.abs(lk.x - rk.x) > 0.03 * bodyPx) { this.order.push(sx); if (this.order.length > 31) this.order.shift(); }
+    const usual = Math.sign(this.order.reduce((a, b) => a + b, 0));
+    if (usual && sx === -usual && Math.abs(lk.x - rk.x) > 0.03 * bodyPx) { [lk, rk] = [rk, lk]; [la, ra] = [ra, la]; }
+    if (feetSeen) {          // (feet cut off by the bottom of the picture: count with the knees alone)
+      const sl = Math.hypot(lk.x - la.x, lk.y - la.y), sr = Math.hypot(rk.x - ra.x, rk.y - ra.y);
+      if (this.shL.length >= 5) {
+        const ml = med(this.shL), mr = med(this.shR);
+        if (sl < 0.7 * ml || sl > 1.4 * ml || sr < 0.7 * mr || sr > 1.4 * mr) return false;
+      }
+      this.shL.push(sl); this.shR.push(sr);
+      if (this.shL.length > 45) { this.shL.shift(); this.shR.shift(); }
+    }
+    if (!counting) return false;
+    const d = lk.y - rk.y, thr = 0.05 * bodyPx;
+    let stepped = false;
+    if (d > thr && this.sign !== 1) { if (this.sign) { this.steps++; stepped = true; } this.sign = 1; }
+    else if (d < -thr && this.sign !== -1) { if (this.sign) { this.steps++; stepped = true; } this.sign = -1; }
+    return stepped;
+  }
+}

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
@@ -21,9 +22,11 @@ import '../widgets/common.dart';
 import 'result_screen.dart';
 
 /// 600 m Run/Walk timed by the phone the athlete carries: GPS for distance + the motion sensor for
-/// steps. Nobody presses Stop or types a time. The face is checked at the start and again within 30 s
-/// of the finish. The raw track goes to the server, which recomputes the time (run_check.py) and
-/// flags anything that doesn't look like a person running (car, bike, fake GPS, wrong face).
+/// steps. Nobody presses Stop or types a time. The face is checked at the start, at 2 RANDOM points
+/// during the run (the phone buzzes, the runner glances at the screen for ~3 s and keeps running), and
+/// within 30 s of the finish - so a friend can't run with the athlete's phone. The raw track goes to the
+/// server, which recomputes the time (run_check.py) and flags anything that doesn't look like this athlete
+/// running (car, bike, fake GPS, wrong face, face check missing or out of place).
 class GpsRunScreen extends StatefulWidget {
   final TestInfo info;
   final double targetM;
@@ -57,6 +60,13 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
   int _count = 0;
   bool _mocked = false;
 
+  // random face checks during the run
+  final List<double> _cpAt = [];                       // distances (m), chosen at "Go", never shown
+  final List<Map<String, dynamic>> _checkpoints = [];  // {t, at_m, frames: [{t, jpg}]}
+  int _cpNext = 0;
+  Future<void>? _cpBusy;
+  CameraSession? _cpCam;
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +87,7 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
     _accSub?.cancel();
     _ticker?.cancel();
     _cam?.close();
+    _cpCam?.close();
     _speech.stop();
     WakelockPlus.disable();
     super.dispose();
@@ -190,6 +201,10 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
     if (_phase != _Phase.running) return;
     final track = distanceTrack(cleanPoints(_fixes));
     _distance = track.isEmpty ? 0 : track.last[1];
+    if (_cpNext < _cpAt.length && _cpBusy == null && _distance >= _cpAt[_cpNext]) {
+      _cpBusy = _faceCheckpoint();
+      _cpNext++;
+    }
     if (_distance >= _nextCall && _nextCall < widget.targetM) {
       _speech.say('$_nextCall metres', interrupt: true);
       _nextCall += 100;
@@ -214,12 +229,62 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
     _speech.say('Go!', interrupt: true);
     _t0 = DateTime.now();
     _fixes.clear();
+    _pickCheckpoints();
     _accSub = userAccelerometerEventStream(samplingPeriod: SensorInterval.gameInterval)
         .listen((e) => _steps.add(_now, e.x, e.y, e.z));
     _ticker = Timer.periodic(const Duration(milliseconds: 200), (_) {
       if (mounted) setState(() {});
     });
     setState(() => _phase = _Phase.running);
+  }
+
+  /// Two points the runner can't predict: one at 20-50 % of the distance, one between 20 % later and 80 %.
+  void _pickCheckpoints() {
+    _cpAt.clear();
+    _checkpoints.clear();
+    _cpNext = 0;
+    if (!_state.requireFace) return;
+    final rng = math.Random.secure();
+    final t = widget.targetM;
+    final a = t * (0.2 + 0.3 * rng.nextDouble());
+    final b = a + 0.2 * t + (0.8 * t - (a + 0.2 * t)) * rng.nextDouble();
+    _cpAt.addAll([a.roundToDouble(), b.roundToDouble()]);
+  }
+
+  /// Buzz + "Face check!", open the front camera and take 3 photos over ~3 s. The clock and GPS keep
+  /// running - the runner just glances at the screen. The server matches the faces to the athlete.
+  Future<void> _faceCheckpoint() async {
+    final frames = <Map<String, dynamic>>[];
+    final cp = <String, dynamic>{
+      't': double.parse(_now.toStringAsFixed(2)),
+      'at_m': double.parse(_distance.toStringAsFixed(1)),
+      'frames': frames,
+    };
+    _checkpoints.add(cp);
+    HapticFeedback.heavyImpact();
+    _speech.say('Face check! Look at the phone.', interrupt: true);
+    final cam = CameraSession(detectPose: false);
+    _cpCam = cam;
+    if (mounted) setState(() {});
+    try {
+      if (await cam.open(front: true)) {
+        if (mounted) setState(() {});
+        await Future.delayed(const Duration(milliseconds: 900));
+        for (var k = 0; k < 3 && mounted && _phase == _Phase.running; k++) {
+          final jpg = await cam.grabJpegBase64();
+          if (jpg != null) frames.add(<String, dynamic>{'t': double.parse(_now.toStringAsFixed(2)), 'jpg': jpg});
+          await Future.delayed(const Duration(milliseconds: 1100));
+        }
+      } else {
+        cp['error'] = cam.error;
+      }
+    } finally {
+      await cam.close();
+      _cpCam = null;
+      _cpBusy = null;
+      HapticFeedback.lightImpact();
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _finish() async {
@@ -231,6 +296,8 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
       _msg = 'Photo within 30 seconds - look at the camera.';
     });
     // GPS keeps recording a few more seconds (the server needs fixes just after the finish line)
+    final busy = _cpBusy;
+    if (busy != null) await busy;   // a face check still closing its camera
     if (_state.requireFace) {
       await _openCamera();
       if (mounted) setState(() => _msg = 'Finish photo within 30 seconds - look at the camera.');
@@ -250,6 +317,7 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
 
   Future<void> _abandon() async {
     await _stopSensors();
+    await _cpCam?.close();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -270,6 +338,8 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
         'steps': _steps.steps,
         'finish_face_t': finishFaceT,
         'phone_time': double.parse(secs.toStringAsFixed(2)),
+        'face_checkpoints_planned': _cpAt.length,
+        'face_checkpoints': _checkpoints,
       },
       'snapshots': [
         if (_startSnap != null) {'t': 0.0, 'jpg': _startSnap},
@@ -299,6 +369,7 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = _cam?.controller;
+    final cpCtl = _cpCam?.controller;
     final big = _state.mode == 'blind' || _state.mode == 'deaf';
     return Scaffold(
       appBar: AppBar(title: Text('${widget.info.name} - phone GPS')),
@@ -333,9 +404,14 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
                         fontWeight: FontWeight.w800,
                         color: (_accuracy ?? 99) <= 15 ? DeepFitColors.green : DeepFitColors.muted)),
                 const SizedBox(height: 8),
-                const Text('Carry the phone in a pocket or armband (screen stays on). Run outdoors. '
-                    'The phone stops by itself at 600 m - nobody presses Stop.',
-                    style: TextStyle(color: DeepFitColors.muted)),
+                Text(
+                    _state.requireFace
+                        ? 'Hold the phone in your hand (screen on). Run outdoors. Twice during the run it buzzes and '
+                            'says "Face check" - look at the screen for 3 seconds and keep running. '
+                            'The phone stops by itself at 600 m - nobody presses Stop.'
+                        : 'Carry the phone in a pocket or armband (screen stays on). Run outdoors. '
+                            'The phone stops by itself at 600 m - nobody presses Stop.',
+                    style: const TextStyle(color: DeepFitColors.muted)),
                 if (_mocked)
                   const Text('⚠ A fake-location app is active - the result will be flagged.',
                       style: TextStyle(color: DeepFitColors.red)),
@@ -353,6 +429,16 @@ class _GpsRunScreenState extends State<GpsRunScreen> {
           if (_phase == _Phase.countdown)
             Center(child: Text('$_count', style: const TextStyle(fontSize: 160, fontWeight: FontWeight.w900))),
           if (_phase == _Phase.running) ...[
+            if (_cpCam != null)
+              Panel(
+                borderColor: DeepFitColors.cyan,
+                child: Column(children: [
+                  const Text('👀 Face check - look at the screen, keep running',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: DeepFitColors.cyan)),
+                  if (cpCtl != null && cpCtl.value.isInitialized)
+                    SizedBox(height: 220, child: Center(child: CameraPreview(cpCtl))),
+                ]),
+              ),
             Panel(
               child: Column(children: [
                 Text('${_distance.clamp(0, widget.targetM).toStringAsFixed(0)} m',

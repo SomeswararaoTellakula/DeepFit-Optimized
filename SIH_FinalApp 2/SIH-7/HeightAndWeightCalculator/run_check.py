@@ -25,6 +25,8 @@ MAX_ACCURACY_M = 25.0        # GPS fixes worse than this are dropped
 MAX_POINT_SPEED = 12.0       # m/s between two fixes: faster = GPS jump (or a vehicle)
 MAX_GAP_S = 10.0             # longest gap between fixes still trusted
 FINISH_FACE_WITHIN_S = 30.0  # the finish face photo must be taken this soon after the finish
+CHECKPOINT_WINDOW_S = 12.0   # a mid-run face photo counts if taken within this many seconds of the buzz
+CHECKPOINT_POS_TOL_M = 40.0  # the phone's distance at a face check may differ this much from the server's
 MIN_STEPS_PER_M = 0.45       # 600 m: at least ~270 steps (a 1.9 m adult sprinting stride ~2.2 m/step is the extreme)
 MAX_STEPS_PER_M = 1.9        # 600 m: at most ~1140 steps (tiny walking steps)
 # Fastest believable average speed (m/s) for a 600 m by age - above these the time would be close to
@@ -122,6 +124,18 @@ def distance_track(pts: List[Dict]) -> List[Tuple[float, float]]:
             ax, ay = x, y
         out.append((t, total))
     return out
+
+
+def distance_at(track: List[Tuple[float, float]], t: float) -> float:
+    """Distance (m) the server's own track had covered at time t (linear between fixes)."""
+    if not track:
+        return 0.0
+    if t <= track[0][0]:
+        return track[0][1]
+    for (t0, d0), (t1, d1) in zip(track, track[1:]):
+        if t0 <= t <= t1:
+            return d0 + (d1 - d0) * ((t - t0) / (t1 - t0) if t1 > t0 else 1.0)
+    return track[-1][1]
 
 
 def crossing_time(track: List[Tuple[float, float]], target: float) -> Optional[float]:
@@ -250,6 +264,26 @@ def check_run(run: Dict, target_m: float = 600.0, age=None, height_cm=None) -> D
     check("finish_face_in_time", ff is not None and 0 <= ff - t_cross <= FINISH_FACE_WITHIN_S,
           "finish face photo " + ("missing" if ff is None else f"{ff - t_cross:.0f} s after the finish")
           + ("" if ff is not None and 0 <= ff - t_cross <= FINISH_FACE_WITHIN_S else f" - must be within {FINISH_FACE_WITHIN_S:.0f} s"))
+
+    # 7. random face checks DURING the run (the phone buzzes at points the runner can't predict and photographs
+    #    the face). Here: did they happen on the route, where and when the phone says? The faces themselves are
+    #    matched to the registered athlete in mobile_api (_checkpoint_faces).
+    planned = int(_num(run.get("face_checkpoints_planned"), 0, 10) or 0)
+    out["face_checkpoints_planned"] = planned
+    if planned:
+        placed = []
+        for c in [c for c in (run.get("face_checkpoints") or []) if isinstance(c, dict)][:planned]:
+            tp, at = _num(c.get("t"), 0, 7200), _num(c.get("at_m"), 0, 5000)
+            if tp is None or at is None:
+                continue
+            d_srv = distance_at(track, tp)
+            placed.append({"t": round(tp, 2), "at_m": round(at), "server_at_m": round(d_srv),
+                           "on_route": tp <= t_cross and abs(d_srv - at) <= max(CHECKPOINT_POS_TOL_M, 0.15 * at)})
+        out["face_checkpoints"] = placed
+        on_route = sum(1 for c in placed if c["on_route"])
+        check("face_checks_on_route", on_route >= planned,
+              f"{on_route} of {planned} random face checks happened on the route where the phone said"
+              + ("" if on_route >= planned else " - missing or out of place"))
 
     out["verdict"] = "measured" if not out["flags"] else "needs_recheck"
     return out

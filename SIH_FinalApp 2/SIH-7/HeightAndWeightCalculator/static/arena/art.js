@@ -386,7 +386,8 @@ export function movePose(move, { run = 0, squatDepth = 1 } = {}) {
   P[11] = [0.56, dy(0.3, 0.45)]; P[12] = [0.44, dy(0.3, 0.45)];
   P[23] = [0.54, dy(0.55, 0.68)]; P[24] = [0.46, dy(0.55, 0.68)];
   P[25] = sq ? [0.6, 0.74] : [0.545, 0.72 - Math.max(0, run) * 0.08]; P[26] = sq ? [0.4, 0.74] : [0.455, 0.72 - Math.max(0, -run) * 0.08];
-  P[27] = [0.55, 0.9]; P[28] = [0.45, 0.9];
+  // running on the spot lifts the foot with the knee (the shin keeps its length, as on a real leg)
+  P[27] = [0.55, 0.9 - Math.max(0, run) * 0.064]; P[28] = [0.45, 0.9 - Math.max(0, -run) * 0.064];
   let lw = [0.58, sq ? 0.62 : 0.58], rw = [0.42, sq ? 0.62 : 0.58];
   if (move === 'hands_up') { lw = [0.56, 0.02]; rw = [0.44, 0.02]; }
   if (move === 'left_hand_up') lw = [0.56, 0.02];

@@ -288,6 +288,7 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
         "identity_strikes": ACTIVE.monitor.strikes,
         "stopped_for_identity": ACTIVE.identity_stopped,
         "coach_timed": ex.camera == "none",
+        **({"identity_scope": "time_entered"} if ex.camera == "none" else {}),   # stopwatch: the time was typed in
         "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "date": datetime.utcnow(),
     }
@@ -333,6 +334,8 @@ def _save_result(manual_value: Optional[float] = None) -> Dict:
     if saved and "passport" in doc:
         out["passport_url"] = f"/passport/r/{doc['_id']}/{doc['passport']['token']}"
         out["passport"] = {"token": doc["passport"]["token"], "athlete_token": doc["athlete_token"]}
+        out["result_id"] = str(doc["_id"])
+        out["hand_check_prompt"] = hand_check_prompt(doc)
     out["next_test"] = _next_test(ath, ACTIVE.mode, just_done=ex.key)
     ACTIVE.result = out
     log_info(f"Test finished: {ex.key} = {res['value']} {res['unit']} ({bench.get('rating')}) mode={ACTIVE.mode}")
@@ -777,6 +780,115 @@ def _result_by_token(rid: str, tok: str):
     return doc, replay
 
 
+# ------------------------------------------------------------------ hand check (real-person accuracy)
+# After a test, whoever watched can enter what they measured by hand. It is kept next to the result as a reference
+# (the score and the passport do not change) and /validation compares the app with these hand values per test.
+HAND_CHECK = {
+    # key: (what to do, unit, tolerance that counts as "agrees")
+    "situps": ("Count the sit-ups by hand while watching", "reps", 0),
+    "partial_curlup": ("Count the curl-ups by hand while watching", "reps", 0),
+    "pushups": ("Count the push-ups by hand while watching", "reps", 0),
+    "pushups_modified": ("Count the push-ups by hand while watching", "reps", 0),
+    "squats": ("Count the squats by hand while watching", "reps", 0),
+    "jumping_jacks": ("Count the jumping jacks by hand while watching", "reps", 0),
+    "dumbbell_curls": ("Count all curls (both arms) by hand while watching", "reps", 0),
+    "flamingo_balance": ("Count the falls by hand while watching", "falls", 0),
+    "plank": ("Time the plank with a stopwatch", "s", 1.0),
+    "plate_tapping": ("Time the 25 cycles with a stopwatch", "s", 0.5),
+    "run_600m": ("Time the run with a stopwatch (someone at the start and finish)", "s", 2.0),
+    "vertical_jump": ("Measure the best jump with a tape (jump-and-reach marks on a wall)", "cm", 3.0),
+    "broad_jump": ("Measure the best jump with a tape: start line to the back of the nearest heel", "cm", 3.0),
+    "sit_and_reach": ("Read the ruler at the fingertips (cm past the toes, minus if short)", "cm", 2.0),
+    "height_weight": ("Measure height against a wall with a tape", "cm", 1.0),
+}
+
+
+def hand_check_prompt(doc: Dict) -> Optional[Dict]:
+    """What a person can measure by hand for this result (None = nothing to compare)."""
+    k = doc.get("exercise_type")
+    if k not in HAND_CHECK or doc.get("incomplete") or (k == "run_600m" and doc.get("timing") != "gps"):
+        return None                       # coach-timed runs ARE the hand value
+    label, unit, tol = HAND_CHECK[k]
+    return {"label": label, "unit": unit, "tolerance": tol}
+
+
+def _app_value(doc: Dict) -> Optional[float]:
+    v = doc.get("height_cm") if doc.get("exercise_type") == "height_weight" else doc.get("value")
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def save_hand_check(doc: Dict, value, source: str) -> Dict:
+    """Store the hand value on the result; returns the comparison for the screen."""
+    pr = hand_check_prompt(doc)
+    if pr is None:
+        return {"ok": False, "error": "This result has nothing to check by hand."}
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Enter a number."}
+    lo = -60 if doc.get("exercise_type") == "sit_and_reach" else 0
+    if not (lo <= v <= 2000):
+        return {"ok": False, "error": "That number is out of range."}
+    app = _app_value(doc)
+    hc = {"value": round(v, 2), "unit": pr["unit"], "source": source, "at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")}
+    db = get_db()
+    if db is not None:
+        db.exercise_results.update_one({"_id": doc["_id"]}, {"$set": {"hand_check": hc}})
+    diff = None if app is None else round(app - v, 2)
+    agrees = diff is not None and abs(diff) <= pr["tolerance"] + 1e-9
+    return {"ok": True, "app": app, "hand": round(v, 2), "unit": pr["unit"], "difference": diff, "agrees": agrees}
+
+
+def validation_stats() -> Dict:
+    """App vs hand values, per test, over every result someone checked by hand."""
+    db = get_db()
+    rows: Dict[str, List] = {}
+    if db is not None:
+        try:
+            docs = list(db.exercise_results.find({}))
+        except Exception:
+            docs = []
+        for d in docs:
+            hc = d.get("hand_check")
+            app = _app_value(d)
+            pr = hand_check_prompt(d)
+            if not hc or app is None or pr is None or not isinstance(hc.get("value"), (int, float)):
+                continue
+            rows.setdefault(d["exercise_type"], []).append((app, float(hc["value"]), pr))
+    out = []
+    for k, vals in sorted(rows.items()):
+        diffs = [a - h for a, h, _ in vals]
+        tol = vals[0][2]["tolerance"]
+        out.append({"key": k, "name": getattr(EE.EXERCISES.get(k), "name", k), "unit": vals[0][2]["unit"], "n": len(vals),
+                    "mean_abs": round(sum(abs(x) for x in diffs) / len(diffs), 2),
+                    "bias": round(sum(diffs) / len(diffs), 2),
+                    "agree_pct": round(100 * sum(1 for x in diffs if abs(x) <= tol + 1e-9) / len(diffs)),
+                    "tolerance": tol, "worst": round(max(diffs, key=abs), 2)})
+    return {"tests": out, "results_checked": sum(r["n"] for r in out)}
+
+
+@exercise_bp.route("/api/hand_check", methods=["POST"])
+def api_hand_check():
+    """Website: the athlete (or the coach next to them) adds the hand-measured value to their own result."""
+    data = request.get_json(silent=True) or {}
+    doc, _ = _result_by_token(str(data.get("rid", "")), str(data.get("tok", "")))
+    ath = current_athlete()
+    if doc is None or ath is None or doc.get("athlete_ref") != ath["ref"]:
+        return jsonify({"ok": False, "error": "Result not found."}), 404
+    r = save_hand_check(doc, data.get("value"), "web")
+    return jsonify(r), (200 if r["ok"] else 400)
+
+
+@exercise_bp.route("/api/validation")
+def api_validation():
+    return jsonify(validation_stats())
+
+
+@exercise_bp.route("/validation")
+def validation_page():
+    return render_template("validation.html", stats=validation_stats())
+
+
 def _checked_at() -> str:
     """When the signature was re-checked (server's local time), shown to whoever scanned the QR."""
     now = datetime.now().astimezone()
@@ -838,6 +950,12 @@ def _result_view(rid: str, tok: str):
         "checked_at": _checked_at(), "card_id": tok,
         "figure": _skeleton_figure(replay, size.get("w") or 640, size.get("h") or 480),
     }
+
+
+@exercise_bp.app_template_filter("who_ran")
+def _who_ran(scope):
+    """Passport line: what a timed result proves about who did it."""
+    return passport.identity_scope_text(scope)
 
 
 @exercise_bp.route("/passport/r/<rid>/<tok>")

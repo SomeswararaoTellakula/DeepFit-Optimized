@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app.dart';
+import '../services/api.dart';
 import '../services/app_state.dart';
 import '../widgets/common.dart';
 import 'test_intro_screen.dart';
@@ -93,6 +94,10 @@ class _ResultScreenState extends State<ResultScreen> {
             if (coach != null) _coachPanel(coach),
             if (maturity != null) _maturityPanel(maturity),
             if (load != null) _loadPanel(r, load, bench),
+            if (server != null && server['hand_check_prompt'] is Map && server['result_id'] is String)
+              _HandCheckPanel(
+                  resultId: server['result_id'] as String,
+                  prompt: (server['hand_check_prompt'] as Map).cast<String, dynamic>()),
             if (passportUrl != null)
               Panel(
                 borderColor: DeepFitColors.green,
@@ -304,6 +309,80 @@ class _ResultScreenState extends State<ResultScreen> {
               '(${m['status']} developer).'),
         if (m['note'] != null)
           Text(m['note'].toString(), style: const TextStyle(color: DeepFitColors.muted, fontSize: 12)),
+      ]),
+    );
+  }
+}
+
+
+/// Optional: what a person counted / timed / measured by hand for this attempt. Kept next to the result (the score
+/// and the passport don't change) and compared with the app on the website's /validation page.
+class _HandCheckPanel extends StatefulWidget {
+  final String resultId;
+  final Map<String, dynamic> prompt;
+  const _HandCheckPanel({required this.resultId, required this.prompt});
+  @override
+  State<_HandCheckPanel> createState() => _HandCheckPanelState();
+}
+
+class _HandCheckPanelState extends State<_HandCheckPanel> {
+  final _c = TextEditingController();
+  String? _msg;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final v = double.tryParse(_c.text.trim().replaceAll(',', '.'));
+    if (v == null) {
+      setState(() => _msg = 'Type the number first.');
+      return;
+    }
+    setState(() => _busy = true);
+    String msg;
+    try {
+      final r = await AppScope.read(context)
+          .api
+          .post('/results/${widget.resultId}/hand_check', {'value': v}, timeout: const Duration(seconds: 15));
+      final unit = r['unit'] ?? '';
+      msg = r['agrees'] == true
+          ? '✓ Saved - the app (${fmtValue(r['app'])}) agrees with your ${fmtValue(r['hand'])} $unit.'
+          : 'Saved - the app said ${fmtValue(r['app'])}, you measured ${fmtValue(r['hand'])} $unit.';
+    } on ApiException catch (e) {
+      msg = e.message;
+    }
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _msg = msg;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('Checked it by hand? (optional)', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text('${widget.prompt['label'] ?? ''}. Type it here to compare with the app.',
+            style: const TextStyle(color: DeepFitColors.muted, fontSize: 13)),
+        const SizedBox(height: 8),
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _c,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+              decoration: InputDecoration(isDense: true, suffixText: '${widget.prompt['unit'] ?? ''}', border: const OutlineInputBorder()),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton(onPressed: _busy ? null : _save, child: const Text('Save')),
+        ]),
+        if (_msg != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_msg!)),
       ]),
     );
   }

@@ -94,4 +94,11 @@ double sumOf(Iterable<double> xs) {
 }
 
 double maxOf(Iterable<double> xs) => xs.reduce(math.max);
+
+/// Python statistics.median: the middle value, or the mean of the two middle values.
+double medianOf(Iterable<double> xs) {
+  final s = xs.toList()..sort();
+  final n = s.length;
+  return n.isOdd ? s[n ~/ 2] : (s[n ~/ 2 - 1] + s[n ~/ 2]) / 2;
+}
 double minOf(Iterable<double> xs) => xs.reduce(math.min);

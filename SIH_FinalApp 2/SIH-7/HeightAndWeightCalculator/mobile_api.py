@@ -611,6 +611,7 @@ def upload_result(ath):
     res = ex.result()
     if rc is not None:
         _finish_face(ath, rc, d.get("snapshots") or [])
+        _checkpoint_faces(ath, rc, d["gps_run"].get("face_checkpoints"))
     client_value = _num((d.get("client_result") or {}).get("value"), -1e6, 1e6)
     same = client_value is None or abs(client_value - float(res["value"])) <= max(VALUE_TOLERANCE, 0.01 * abs(res["value"]))
     bench = (XB.load_benchmark(ex, res, ath, _population(mode))
@@ -622,6 +623,7 @@ def upload_result(ath):
         "duration": int(round(last_t)) if camera_test else None, "mode": mode, "benchmark": bench,
         "identity_checked": REQUIRE_FACE_CHECK, "identity_strikes": ident["strikes"], "stopped_for_identity": False,
         "coach_timed": not camera_test and rc is None,
+        **({"identity_scope": _identity_scope(rc)} if not camera_test else {}),
         **({"timing": "gps", "run_verdict": rc["verdict"], "run_check": {k: v for k, v in rc.items() if k != "points"},
             "track_hash": _track_hash(d["gps_run"])} if rc is not None else {}),
         "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "date": now,
@@ -684,8 +686,81 @@ def _finish_face(ath: Dict, rc: Dict, snaps: List) -> None:
         rc["flags"].append(detail); rc["verdict"] = "needs_recheck"
 
 
+def _checkpoint_faces(ath: Dict, rc: Dict, cps) -> None:
+    """GPS runs: at random points during the run the phone buzzed and photographed the runner. Each point needs
+    a photo of the registered athlete taken right after the buzz - so whoever carried the phone at those
+    unpredictable moments is the athlete (closes the 'friend runs with my phone' gap)."""
+    planned = int(rc.get("face_checkpoints_planned") or 0)
+    if not planned or not REQUIRE_FACE_CHECK:
+        return
+    where = rc.get("face_checkpoints") or []
+    cps = [c for c in (cps or []) if isinstance(c, dict)][:planned]
+    matched, problems = 0, []
+    for i in range(planned):
+        c = cps[i] if i < len(cps) else {}
+        at = (where[i]["at_m"] if i < len(where) else None) or _num(c.get("at_m"), 0, 5000)
+        label = f"about {at:.0f} m" if at is not None else f"point {i + 1}"
+        tp = _num(c.get("t"), 0, 7200)
+        frames = [f for f in (c.get("frames") or []) if isinstance(f, dict) and f.get("jpg")][:4]
+        res = "no_face"
+        for f in frames:
+            ft = _num(f.get("t"), 0, 7200)
+            if tp is None or ft is None or not (tp - 1 <= ft <= tp + run_check.CHECKPOINT_WINDOW_S):
+                continue
+            ok, score, info = _verify(ath, str(f["jpg"]), single=False)
+            if ok:
+                res = "match"
+                break
+            if info.get("reason") == "mismatch":
+                res = "mismatch"
+        if i < len(where):
+            where[i]["face"] = res
+        if res == "match":
+            matched += 1
+        elif res == "mismatch":
+            problems.append(f"a DIFFERENT person was holding the phone at {label}")
+        else:
+            problems.append(f"no face was seen at the face check at {label}")
+    ok = matched >= planned
+    detail = f"the athlete's face matched at {matched} of {planned} random points during the run"
+    rc["checks"].append({"check": "mid_run_face_match", "ok": ok, "detail": detail + ("" if ok else " - " + "; ".join(problems))})
+    if not ok:
+        rc["flags"].append("; ".join(problems))
+        rc["verdict"] = "needs_recheck"
+    rc["mid_run_faces_matched"] = matched
+
+
+def _identity_scope(rc: Optional[Dict]) -> str:
+    """What the result proves about WHO did a timed run - written on the passport in plain words."""
+    if rc is None:
+        return "time_entered"                   # stopwatch: the time was typed in, the phone did not see the run
+    n = int(rc.get("mid_run_faces_matched") or 0)
+    if n and n >= int(rc.get("face_checkpoints_planned") or 0):
+        return f"start_mid{n}_finish"
+    return "start_finish"
+
+
+@mobile_bp.route("/results/<rid>/hand_check", methods=["POST"])
+@json_errors
+@login_required
+def hand_check(ath, rid):
+    """The phone: add the hand-measured value (count / stopwatch / tape) to the athlete's own result."""
+    db = get_db()
+    try:
+        doc = db.exercise_results.find_one({"_id": ObjectId(rid)}) if (db is not None and ObjectId is not None) else None
+    except Exception:
+        doc = None
+    if not doc or doc.get("athlete_ref") != ath["ref"]:
+        return _err("Result not found.", 404)
+    r = XB.save_hand_check(doc, (request.get_json(silent=True) or {}).get("value"), "phone")
+    return _ok(**r) if r["ok"] else _err(r["error"])
+
+
 def _out(doc: Dict, ath: Dict) -> Dict:
     out = {k: v for k, v in doc.items() if k not in HIDE_FROM_APP and k != "passport"}
+    if doc.get("_id") is not None:
+        out["result_id"] = str(doc["_id"])
+        out["hand_check_prompt"] = XB.hand_check_prompt(doc)
     if doc.get("passport") and doc.get("_id") is not None:
         out["passport_url"] = f"{_base_url()}/passport/r/{doc['_id']}/{doc['passport']['token']}"
         out["athlete_passport_url"] = f"{_base_url()}/passport/a/{doc['passport']['athlete_token']}"

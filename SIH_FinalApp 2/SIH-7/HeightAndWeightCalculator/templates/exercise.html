@@ -302,6 +302,16 @@
             <p id="result-note" style="color:#fca5a5"></p>
             <div id="result-extra"></div>
             <p id="passport-line" style="display:none;margin:.4rem 0 0"><a id="passport-link" href="#" style="color:#67e8f9;font-weight:700">🪪 Verified result card (QR) - share with a coach</a></p>
+            <div id="hand-check" style="display:none;margin:.8rem auto 0;max-width:420px;text-align:left;border:1px dashed #334155;border-radius:12px;padding:.7rem .8rem">
+                <label for="hc-value" style="font-weight:700;color:#cbd5e1">Checked it by hand? <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
+                <p id="hc-label" style="margin:.2rem 0 .4rem;color:#94a3b8;font-size:.9rem"></p>
+                <div style="display:flex;gap:.4rem;align-items:center">
+                    <input id="hc-value" type="number" inputmode="decimal" step="any" style="flex:1;min-width:0;padding:.45rem .6rem;border-radius:8px;border:1px solid #334155;background:#071730;color:#e6f0ff">
+                    <span id="hc-unit" style="color:#94a3b8"></span>
+                    <button type="button" id="hc-save" class="btn btn-secondary">Save</button>
+                </div>
+                <p id="hc-status" role="status" style="margin:.4rem 0 0;font-size:.9rem"></p>
+            </div>
             <div class="actions">
                 <a class="btn btn-primary" id="next-btn" href="/tests?mode={{ mode }}">Next test →</a>
                 <button class="btn btn-warning" id="retake-btn">Retake</button>

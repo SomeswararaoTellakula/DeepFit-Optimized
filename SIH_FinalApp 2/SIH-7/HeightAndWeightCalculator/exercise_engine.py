@@ -126,8 +126,27 @@ class Exercise:
         self.mirror_value: Optional[float] = None
         self.mirror_label = ""
         self._mirror_hist: deque = deque(maxlen=3)
+        self.sm = Smoother()                 # median filter for every signal a threshold is applied to
 
     # --- helpers for subclasses
+    def bones_ok(self, pose: "Pose", pairs, lo: float = 0.65, hi: float = 1.5) -> bool:
+        """False when a body segment suddenly looks much longer or shorter than it has been - one landmark was
+        put in the wrong place for a frame (bones can't stretch). Such frames are skipped, not counted."""
+        if not hasattr(self, "_bones"):
+            self._bones: Dict = {}
+        lens = [(a, b, pose.dist(a, b)) for a, b in pairs if pose.vis(a, b)]   # only points the model is sure of
+        bad = False
+        for a, b, L in lens:
+            d = self._bones.get((a, b))
+            if d is not None and len(d) >= 8:
+                m = median(d)
+                if m > 0 and not (lo * m <= L <= hi * m):
+                    bad = True
+        if not bad:
+            for a, b, L in lens:
+                self._bones.setdefault((a, b), deque(maxlen=45)).append(L)
+        return not bad
+
     def event(self, kind: str, text: str):
         self._event_id += 1
         self.events.append({"id": self._event_id, "kind": kind, "text": text})
@@ -211,17 +230,43 @@ class Exercise:
         }
 
 
-class RepState:
-    """Two-threshold rep counter with a little debouncing."""
+class Smoother:
+    """Median of each signal over the last ~0.22 s (at least 3 frames). Pose models jitter and now and then
+    put a landmark in the wrong place for a frame or two; a median removes that without lagging behind real
+    movement. Every threshold below is applied to smoothed values."""
 
-    def __init__(self, frames: int = 2):
+    def __init__(self, window: float = 0.22, min_n: int = 3):
+        self.window, self.min_n = window, min_n
+        self.buf: Dict[str, deque] = {}
+
+    def __call__(self, key: str, v: Optional[float], t: float) -> Optional[float]:
+        if v is None:
+            return None
+        d = self.buf.setdefault(key, deque(maxlen=64))
+        d.append((t, v))
+        while len(d) > self.min_n and t - d[0][0] > self.window:
+            d.popleft()
+        return median(x for _, x in d)
+
+    def reset(self, *keys):
+        for k in keys or list(self.buf):
+            self.buf.pop(k, None)
+
+
+class RepState:
+    """Two-threshold rep counter with a little debouncing (frames in a row) and a minimum time between
+    stage changes (a real movement can't flip down/up faster than min_gap)."""
+
+    def __init__(self, frames: int = 2, min_gap: float = 0.0):
         self.stage = None
         self.prev = None
         self.frames = frames
+        self.min_gap = min_gap
         self._pending = None
         self._n = 0
+        self._t_change = -1e9
 
-    def see(self, stage: Optional[str]) -> Optional[str]:
+    def see(self, stage: Optional[str], t: Optional[float] = None) -> Optional[str]:
         """Feed 'down'/'up'/None each frame; returns the new stage when it changes.
         self.prev tells which stage it came from (None at the very start)."""
         if stage is None or stage == self.stage:
@@ -231,9 +276,11 @@ class RepState:
             self._n += 1
         else:
             self._pending, self._n = stage, 1
-        if self._n >= self.frames:
+        if self._n >= self.frames and (t is None or self.stage is None or t - self._t_change >= self.min_gap):
             self.prev = self.stage
             self.stage, self._pending, self._n = stage, None, 0
+            if t is not None:
+                self._t_change = t
             return stage
         return None
 
@@ -254,7 +301,7 @@ class SitUps(Exercise):
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.rs = RepState()
+        self.rs = RepState(min_gap=0.25)
         self.mirror_label = "Tone rises as you sit up; highest when you are up"
 
     def mirror(self, pose, t):
@@ -266,8 +313,10 @@ class SitUps(Exercise):
         if not side:
             self.feedback = "Turn side-on so your shoulder, hip and knee are visible"
             return
-        elev = elevation(pose.p(side[1]), pose.p(side[0]))
-        st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None))
+        if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2])]):
+            return
+        elev = self.sm("elev", elevation(pose.p(side[1]), pose.p(side[0])), t)
+        st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None), t)
         if st == "up":
             self.feedback = "Good - now lie back down"
         elif st == "down":
@@ -297,7 +346,7 @@ class PartialCurlUp(Exercise):
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.rs = RepState()
+        self.rs = RepState(min_gap=0.2)
         self.mirror_label = "Tone rises as you curl up; highest at the right height (about 25°)"
 
     def mirror(self, pose, t):
@@ -312,9 +361,11 @@ class PartialCurlUp(Exercise):
         if not side:
             self.feedback = "Turn side-on so your shoulder, hip and knee are visible"
             return
-        elev = elevation(pose.p(side[1]), pose.p(side[0]))
+        if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2])]):
+            return
+        elev = self.sm("elev", elevation(pose.p(side[1]), pose.p(side[0])), t)
         self.max_elev = max(getattr(self, "max_elev", 0), elev)
-        st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None))
+        st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None), t)
         if st == "up":
             self.feedback = "Lower back down"
         elif st == "down":
@@ -333,6 +384,7 @@ class PushUps(Exercise):
     key, name, icon, category = "pushups", "Push-ups", "💪", "strength"
     khelo_india, duration = True, 60
     DOWN, UP, STRAIGHT = 95, 150, 150   # elbow angle down/up, body line angle
+    DOWN_RATIO, UP_RATIO = 0.76, 0.93   # shoulder-to-hand distance vs the straight-arm top (0.71 = elbows at 90°)
     knee_variant = False
     setup = ["Hands under shoulders, body straight from head to heels", "Phone side-on at floor level, about 2 m away"]
     counting = "One rep = lower until the elbows bend to about 90°, then push up until the arms are straight. The body must stay straight."
@@ -341,10 +393,13 @@ class PushUps(Exercise):
                         "Optional tactile marker (folded towel) under the chest to feel the bottom position"]
     deaf_adaptation = ["Green flash per counted rep, red border when the body line breaks"]
 
+    BAD_LINE_FRAMES, BAD_LINE_SHARE = 3, 0.2   # body line broken for >= 3 frames and >= 20 % of the rep = not counted
+
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.rs = RepState()
+        self.rs = RepState(frames=1, min_gap=0.25)   # one frame is enough: the median + bone check remove glitches
         self.bad_line_in_rep = False
+        self._bad_n = self._rep_n = 0
         self.mirror_label = "Tone is highest and steady when your body is a straight line"
 
     def mirror(self, pose, t):
@@ -359,16 +414,35 @@ class PushUps(Exercise):
         if not side:
             self.feedback = "Turn side-on - shoulder, elbow, wrist, hip and " + ("knee" if self.knee_variant else "ankle") + " must be visible"
             return
+        if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2]), (side[0], side[3]), (side[3], side[4])]):
+            return
         sh, el, wr, hp, en = (pose.p(i) for i in side)
-        elbow = angle(sh, el, wr)
-        body = angle(sh, hp, en)
-        if body < self.STRAIGHT:
-            self.bad_line_in_rep = True
-        st = self.rs.see("down" if elbow < self.DOWN else ("up" if elbow > self.UP else None))
+        k = "L" if side[0] == L_SHOULDER else "R"           # the two arms look different from the side: keep apart
+        elbow = self.sm("elbow" + k, angle(sh, el, wr), t)
+        body = self.sm("body" + k, angle(sh, hp, en), t)
+        # depth that a camera a little off side-on can't fake: the shoulder-to-hand line is nearly vertical, so
+        # turning the camera doesn't shorten it the way it opens up the elbow angle. The straight-arm reference is
+        # the 90th percentile of the last few seconds (one bad frame can't set it).
+        reach = self.sm("reach" + k, math.hypot(wr[0] - sh[0], wr[1] - sh[1]), t)
+        hist = self.__dict__.setdefault("_reach_hist", {}).setdefault(k, deque(maxlen=120))
+        hist.append(reach)
+        srt = sorted(hist)
+        top = srt[int(0.9 * (len(srt) - 1))]
+        ratio = reach / top if (top > 0 and len(srt) >= 10) else 1.0
+        # deep enough = the elbow bends AND the shoulders come down (a left/right mix-up of the arms can bend the
+        # "elbow" for a frame but can't bring the shoulders down), or the shoulders come right down
+        down = (elbow < self.DOWN and ratio < 0.85) or ratio < self.DOWN_RATIO
+        up = elbow > self.UP and ratio > self.UP_RATIO
+        if not up:                                 # body line is judged over this rep's frames only
+            self._rep_n += 1
+            if body < self.STRAIGHT:
+                self._bad_n += 1
+        self.bad_line_in_rep = self._bad_n >= max(self.BAD_LINE_FRAMES, self.BAD_LINE_SHARE * self._rep_n)
+        st = self.rs.see("down" if down else ("up" if up else None), t)
         if st == "down":
             self.feedback = "Push up!"
         elif st == "up" and self.rs.prev != "down":
-            self.bad_line_in_rep = False
+            self._bad_n = self._rep_n = 0
             self.feedback = "Lower your chest"
         elif st == "up":
             if self.bad_line_in_rep:
@@ -376,7 +450,9 @@ class PushUps(Exercise):
                 self.fault("body_line", "Not counted - keep your body straight")
             else:
                 self.rep()
-            self.bad_line_in_rep = False
+            self._bad_n = self._rep_n = 0
+        elif up and self.rs.stage == "up":
+            self._bad_n = self._rep_n = 0          # resting at the top: the next rep starts fresh
 
 
 class ModifiedPushUps(PushUps):
@@ -391,6 +467,8 @@ class Plank(Exercise):
     key, name, icon, category = "plank", "Plank Hold", "🧱", "core"
     metric, unit, duration = "hold_time", "s", 180
     STRAIGHT, MAX_TORSO_ELEV, GRACE = 155, 40, 2.0
+    SETTLE = 0.6          # straight for this long before the clock starts (credited once it starts)
+    MIN_HOLD = 3.0        # a break before this much hold = still getting into position, not the end
     setup = ["Forearms on the floor, elbows under shoulders", "Body straight from head to heels",
              "Phone side-on at floor level, about 2 m away"]
     counting = "Time starts when you are in a straight plank and stops when the body line breaks for more than 2 seconds (or at 3 minutes)."
@@ -405,6 +483,7 @@ class Plank(Exercise):
         self.broken_since: Optional[float] = None
         self._prev_t: Optional[float] = None
         self._last_called = 0
+        self._good_since: Optional[float] = None
         self.mirror_label = "Tone rises as your hips line up; steady high tone = perfect plank"
 
     def mirror(self, pose, t):
@@ -415,15 +494,27 @@ class Plank(Exercise):
         dt = 0.0 if self._prev_t is None else min(0.5, t - self._prev_t)
         self._prev_t = t
         side = pose.best_side([L_SHOULDER, L_HIP, L_ANKLE], [R_SHOULDER, R_HIP, R_ANKLE])
-        good = False
-        if side:
-            sh, hp, an = (pose.p(i) for i in side)
-            good = angle(sh, hp, an) >= self.STRAIGHT and elevation(an, sh) <= self.MAX_TORSO_ELEV
+        if not side:                       # can't see the body: the clock pauses, nothing is decided
+            self.feedback = "Turn side-on - shoulder, hip and ankle visible"
+            return
+        if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2])]):
+            return
+        sh, hp, an = (pose.p(i) for i in side)
+        good = (self.sm("line", angle(sh, hp, an), t) >= self.STRAIGHT
+                and self.sm("elev", elevation(an, sh), t) <= self.MAX_TORSO_ELEV)
+        if good and not self.holding:
+            if self._good_since is None:
+                self._good_since = t
+            if t - self._good_since < self.SETTLE:
+                self.feedback = "Hold still in a straight plank…"
+                return
+            self.holding = True
+            self.event("start", "Holding")
+            dt = t - self._good_since           # the settling time counts once the plank is confirmed
+        elif not good and not self.holding:
+            self._good_since = None
         if good:
             self.broken_since = None
-            if not self.holding:
-                self.holding = True
-                self.event("start", "Holding")
             self.hold += dt
             self.feedback = f"Hold it! {int(self.hold)} s"
             if int(self.hold) // 10 > self._last_called:
@@ -434,11 +525,15 @@ class Plank(Exercise):
                 self.broken_since = t
                 self.fault("line_break", "Fix your hips - straight line!")
             elif t - self.broken_since > self.GRACE:
+                if self.hold < self.MIN_HOLD:      # was only settling in: start again, don't end the test
+                    self.holding, self.hold, self.broken_since, self._good_since = False, 0.0, None, None
+                    self.feedback = "Get into a straight plank to start the clock"
+                    return
                 self.finished = True
                 self.feedback = f"Plank ended at {int(self.hold)} s"
                 self.event("end", self.feedback)
         else:
-            self.feedback = "Get into a straight plank to start the clock" if side else "Turn side-on - shoulder, hip and ankle visible"
+            self.feedback = "Get into a straight plank to start the clock"
 
     def value(self):
         return self.hold
@@ -446,7 +541,8 @@ class Plank(Exercise):
 
 class Squats(Exercise):
     key, name, icon, category = "squats", "Squats", "🦵", "strength"
-    DOWN, UP, MAX_LEAN = 100, 160, 55
+    DOWN, UP, MAX_LEAN = 100, 160, 60
+    LEAN_FRAMES = 3       # chest too far forward for this many (smoothed) frames = rep not counted
     setup = ["Feet shoulder-width apart, arms forward", "Phone side-on about 2.5 m away, whole body visible"]
     counting = "One rep = bend until the knee angle is under 100° (thighs about parallel), then stand fully up."
     form_cues = ["Chest up", "Knees track over toes", "Heels stay down"]
@@ -455,8 +551,9 @@ class Squats(Exercise):
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.rs = RepState()
+        self.rs = RepState(min_gap=0.25)
         self.lean_bad = False
+        self._lean_n = 0
         self.mirror_label = "Tone rises as you go down; highest at full depth"
 
     def mirror(self, pose, t):
@@ -468,16 +565,19 @@ class Squats(Exercise):
         if not side:
             self.feedback = "Step back - hip, knee and ankle must be visible"
             return
+        if not self.bones_ok(pose, [(side[1], side[2]), (side[2], side[3])]):
+            return
         sh, hp, kn, an = (pose.p(i) for i in side)
-        knee = angle(hp, kn, an)
-        lean = 90 - elevation(hp, sh)
+        knee = self.sm("knee", angle(hp, kn, an), t)
+        lean = self.sm("lean", 90 - elevation(hp, sh), t)
         if knee < 130 and lean > self.MAX_LEAN:
-            self.lean_bad = True
-        st = self.rs.see("down" if knee < self.DOWN else ("up" if knee > self.UP else None))
+            self._lean_n += 1
+            self.lean_bad = self._lean_n >= self.LEAN_FRAMES
+        st = self.rs.see("down" if knee < self.DOWN else ("up" if knee > self.UP else None), t)
         if st == "down":
             self.feedback = "Drive up!"
         elif st == "up" and self.rs.prev != "down":
-            self.lean_bad = False
+            self.lean_bad, self._lean_n = False, 0
             self.feedback = "Squat down"
         elif st == "up":
             if self.lean_bad:
@@ -485,38 +585,45 @@ class Squats(Exercise):
                 self.fault("lean", "Not counted - keep your chest up")
             else:
                 self.rep()
-            self.lean_bad = False
+            self.lean_bad, self._lean_n = False, 0
 
 
 class JumpingJacks(Exercise):
     key, name, icon, category = "jumping_jacks", "Jumping Jacks", "⭐", "cardio"
     camera = "front"
     setup = ["Face the camera, about 2.5 m away, whole body visible", "Start with feet together, arms down"]
-    counting = "One rep = jump to arms overhead + feet wide, then back to arms down + feet together."
+    counting = "One rep = jump to arms overhead (hands above the head) + feet wide, then back to arms down + feet together."
     form_cues = ["Hands go above the head", "Feet wider than shoulders", "Land softly"]
     blind_adaptation = ["Spoken count after every rep"]
     deaf_adaptation = ["Green flash per rep; big rep counter and captions"]
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.rs = RepState()
+        self.rs = RepState(frames=1, min_gap=0.15)
+        # jacks are fast (at 10 fps the arms-overhead moment can be a single frame), so no median here; frames where
+        # an arm or leg suddenly changes length are skipped instead, and the checks don't care which hand is which
+        self.sm = Smoother(window=0.0, min_n=1)
 
     def process(self, pose, t):
         need = [L_SHOULDER, R_SHOULDER, L_WRIST, R_WRIST, L_ANKLE, R_ANKLE]
         if not pose.vis(*need):
             self.feedback = "Face the camera - hands and feet must be visible"
             return
-        shw = max(pose.dist(L_SHOULDER, R_SHOULDER), 1)
-        feet = abs(pose.p(L_ANKLE)[0] - pose.p(R_ANKLE)[0])
+        if not self.bones_ok(pose, [(L_SHOULDER, L_ELBOW), (L_ELBOW, L_WRIST), (R_SHOULDER, R_ELBOW), (R_ELBOW, R_WRIST),
+                                    (L_HIP, L_ANKLE), (R_HIP, R_ANKLE)]):
+            return
+        shw = self.sm("shw", max(pose.dist(L_SHOULDER, R_SHOULDER), 1), t)
+        feet = self.sm("feet", abs(pose.p(L_ANKLE)[0] - pose.p(R_ANKLE)[0]) / shw, t)
         sh_y = min(pose.p(L_SHOULDER)[1], pose.p(R_SHOULDER)[1])
-        hands_up = pose.p(L_WRIST)[1] < sh_y and pose.p(R_WRIST)[1] < sh_y
-        hands_down = pose.p(L_WRIST)[1] > sh_y + 0.3 * shw and pose.p(R_WRIST)[1] > sh_y + 0.3 * shw
-        if hands_up and feet > 1.3 * shw:
-            st = self.rs.see("open")
-        elif hands_down and feet < 1.0 * shw:
-            st = self.rs.see("closed")
+        head_y = pose.p(NOSE)[1] if pose.vis(NOSE) else sh_y - 0.5 * shw
+        hand = self.sm("hand", max(pose.p(L_WRIST)[1], pose.p(R_WRIST)[1]) - head_y, t) / shw   # lower hand vs head
+        low = self.sm("low", min(pose.p(L_WRIST)[1], pose.p(R_WRIST)[1]) - sh_y, t) / shw
+        if hand < 0 and feet > 1.3:
+            st = self.rs.see("open", t)
+        elif low > 0.3 and feet < 1.0:
+            st = self.rs.see("closed", t)
         else:
-            st = self.rs.see(None)
+            st = self.rs.see(None, t)
         if st == "closed" and getattr(self, "_was_open", False):
             self.rep()
             self._was_open = False
@@ -541,6 +648,7 @@ class DumbbellCurls(Exercise):
         super().__init__(**kw)
         self.state = {"left": "down", "right": "down"}
         self.counts = {"left": 0, "right": 0}
+        self._t_state = {"left": -1e9, "right": -1e9}
         # weight analysis (does not change counting, feedback or events - the phone app counts the same way)
         self.load_kg: Optional[float] = None
         self.body_weight_kg: Optional[float] = None
@@ -571,9 +679,13 @@ class DumbbellCurls(Exercise):
             if not pose.vis(s, e, w):
                 continue
             seen = True
-            a = angle(pose.p(s), pose.p(e), pose.p(w))
-            self._measure(arm, pose, (s, e, w), a, t)
+            raw = angle(pose.p(s), pose.p(e), pose.p(w))
+            a = self.sm("a_" + arm, raw, t)                 # counting uses the smoothed angle...
+            self._measure(arm, pose, (s, e, w), raw, t)     # ...the weight analysis keeps every raw detail
+            if t - self._t_state[arm] < 0.2:           # a real curl can't flip faster than this
+                continue
             if self.state[arm] == "down" and a < self.UP:
+                self._t_state[arm] = t
                 self.state[arm] = "up"
                 self.counts[arm] += 1
                 self.count += 1
@@ -583,6 +695,7 @@ class DumbbellCurls(Exercise):
                     self._track[arm]["counted"] = True
             elif self.state[arm] == "up" and a > self.DOWN:
                 self.state[arm] = "down"
+                self._t_state[arm] = t
                 self._finish_rep(arm, t)
         if not seen:
             self.feedback = "Face the camera - shoulders, elbows and wrists visible"
@@ -671,37 +784,62 @@ class _JumpBase(Exercise):
     duration = 90
     ATTEMPTS = 3
 
+    G = 981.0                     # cm/s^2 - flight is ballistic, which lets us find the true top of the jump
+    CALIB_N = 12
+
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.calib: deque = deque(maxlen=20)
+        self.calib: deque = deque(maxlen=self.CALIB_N)
         self.base = None                  # dict with standing hip y, ankle x/y, cm_per_px
         self.airborne = False
         self.attempts: List[float] = []
         self.peak_rise = 0.0
         self.land_frames = 0
+        self._up_n = 0
+        self._flight: List = []           # (t, value) samples while in the air
+
+    @staticmethod
+    def _avg_visible(pose, a, b):
+        pts = [pose.pts[i] for i in (a, b) if pose.pts[i][2] >= VIS]
+        if not pts:
+            return None
+        return (sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
 
     def _standing(self, pose):
-        need = [NOSE, L_HIP, R_HIP, L_ANKLE, R_ANKLE]
-        if not pose.vis(*need):
+        """Side view: the far hip / ankle is often hidden behind the body - use whichever are visible."""
+        # a hip or ankle put in the wrong place for a frame or two would look like a jump: the rigid parts (torso,
+        # thigh, shin) can't change length, so such frames are skipped
+        if not self.bones_ok(pose, [(L_SHOULDER, L_HIP), (R_SHOULDER, R_HIP), (L_HIP, L_KNEE), (R_HIP, R_KNEE),
+                                    (L_KNEE, L_ANKLE), (R_KNEE, R_ANKLE)], lo=0.75, hi=1.33):
             return None
-        hip = pose.mid(L_HIP, R_HIP)
-        ank = pose.mid(L_ANKLE, R_ANKLE)
-        nose = pose.p(NOSE)
-        return {"hip_y": hip[1], "ank_x": ank[0], "ank_y": ank[1], "body_px": ank[1] - nose[1],
-                "l_ank_y": pose.p(L_ANKLE)[1], "r_ank_y": pose.p(R_ANKLE)[1]}
+        head = next((pose.p(i) for i in (NOSE, 2, 5, 7, 8) if pose.pts[i][2] >= VIS), None)
+        hip = self._avg_visible(pose, L_HIP, R_HIP)
+        ank = self._avg_visible(pose, L_ANKLE, R_ANKLE)
+        if head is None or hip is None or ank is None:
+            return None
+        lv, rv = pose.pts[L_ANKLE][2] >= VIS, pose.pts[R_ANKLE][2] >= VIS
+        return {"hip_y": hip[1], "ank_x": ank[0], "ank_y": ank[1], "body_px": ank[1] - head[1],
+                "l_ank_y": pose.p(L_ANKLE)[1] if lv else ank[1], "r_ank_y": pose.p(R_ANKLE)[1] if rv else ank[1],
+                "both_feet": lv and rv}
+
+    @staticmethod
+    def _sd(vals):
+        m = sum(vals) / len(vals)
+        return math.sqrt(sum((v - m) * (v - m) for v in vals) / len(vals))
 
     def _calibrate(self, cur):
         self.calib.append(cur)
-        if len(self.calib) < 12:
+        if len(self.calib) < self.CALIB_N:
             self.feedback = "Stand still for calibration…"
             return False
         hips = [c["hip_y"] for c in self.calib]
         xs = [c["ank_x"] for c in self.calib]
-        if max(hips) - min(hips) > 0.02 * cur["body_px"] or max(xs) - min(xs) > 0.03 * cur["body_px"]:
+        body = median(c["body_px"] for c in self.calib)
+        # still = the hips and feet only jitter (camera noise), they don't drift or walk
+        if self._sd(hips) > 0.015 * body or self._sd(xs) > 0.025 * body:
             self.feedback = "Stand still for calibration…"
             return False
-        n = len(self.calib)
-        avg = {k: sum(c[k] for c in self.calib) / n for k in cur}
+        avg = {k: median(c[k] for c in self.calib) for k in cur if k != "both_feet"}
         # nose is ~0.92 of standing height; ankle ~0.04 above the floor
         avg["cm_per_px"] = (self.height_cm * 0.88) / max(avg["body_px"], 1)
         self.base = avg
@@ -712,6 +850,45 @@ class _JumpBase(Exercise):
 
     def value(self):
         return max(self.attempts) if self.attempts else 0.0
+
+    def _apex(self, samples) -> float:
+        """Top of the flight from the hip samples: fit a ballistic curve (fixed gravity), so the peak is right
+        even when no frame landed exactly on it (10-15 fps phones) and one bad frame can't inflate it."""
+        vals = sorted(v for _, v in samples)
+        # the second-highest frame (one jumpy frame can't make a jump) - unless the camera gave only a few frames
+        robust = vals[-2] if len(vals) >= 4 else (vals[-1] if vals else 0.0)
+        pts = [(t, v) for t, v in samples if v >= 0.5 * robust]
+        # the curve fit is only for real flight: time spent above half the height must match free fall, and the fit
+        # may only add what a gap between two frames can hide (a slow rise on the toes is not a flight)
+        gap = max((b[0] - a[0] for a, b in zip(samples, samples[1:])), default=0.0)
+        above = pts[-1][0] - pts[0][0] if pts else 0.0
+        if not (robust > 0 and above <= 1.5 * 2 * math.sqrt(robust / self.G) + gap):
+            pts = []
+        max_gain = 0.5 * self.G * (gap / 2) * (gap / 2) + 2
+        for _ in range(3):
+            if len(pts) < 3:
+                break
+            t0 = pts[0][0]
+            xs = [t - t0 for t, _ in pts]
+            ys = [v + 0.5 * self.G * x * x for x, (_, v) in zip(xs, pts)]
+            n = len(xs); mx, my = sum(xs) / n, sum(ys) / n
+            sxx = sum((x - mx) * (x - mx) for x in xs)
+            if sxx <= 1e-9:
+                break
+            b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+            a = my - b * mx
+            res = [v - (a + b * x - 0.5 * self.G * x * x) for x, (_, v) in zip(xs, pts)]
+            worst = max(range(n), key=lambda i: abs(res[i]))
+            if abs(res[worst]) > 5 and n > 3:
+                pts.pop(worst)
+                continue
+            top_t = b / self.G
+            if min(xs) - 0.1 <= top_t <= max(xs) + 0.1:
+                apex = a + b * b / (2 * self.G)
+                if robust - 3 <= apex <= robust + max_gain:
+                    return max(apex, robust)      # two frames already reached 'robust'; the fit finds the top between frames
+            break
+        return robust
 
     def stats(self):
         s = super().stats()
@@ -739,16 +916,25 @@ class VerticalJump(_JumpBase):
             self._calibrate(cur)
             return
         rise = (self.base["hip_y"] - cur["hip_y"]) * self.base["cm_per_px"]
-        if not self.airborne and rise > 6:
-            self.airborne = True
-            self.peak_rise = rise
-            self.feedback = "Up!"
+        if not self.airborne:
+            self._up_n = self._up_n + 1 if rise > 6 else 0
+            self._flight = (self._flight + [(t, rise)])[-2:]
+            if self._up_n >= 2:                   # two frames in a row: a real take-off, not one bad frame
+                self.airborne = True
+                self.peak_rise = max(v for _, v in self._flight)
+                self.feedback = "Up!"
         elif self.airborne:
+            self._flight.append((t, rise))
             self.peak_rise = max(self.peak_rise, rise)
             if rise < 3:
                 self.land_frames += 1
                 if self.land_frames >= 3:
-                    self.airborne, self.land_frames = False, 0
+                    self.airborne, self.land_frames, self._up_n = False, 0, 0
+                    self.peak_rise = self._apex(self._flight)
+                    self._flight = []
+                    if self.peak_rise < 8:        # a heel raise or a wobble, not a jump: ignore, stay ready
+                        self.feedback = f"Ready - jump! (attempt {len(self.attempts) + 1} of {self.ATTEMPTS})"
+                        return
                     self.attempts.append(self.peak_rise)
                     self.count = len(self.attempts)
                     self.feedback = f"Jump {len(self.attempts)}: {self.peak_rise:.0f} cm"
@@ -772,37 +958,80 @@ class BroadJump(_JumpBase):
                         "Spoken distance after each jump"]
     deaf_adaptation = ["Caption shows 'Ready - jump!'; distance shown in large text and captions"]
 
+    BACK_TO_LINE_CM = 30          # later attempts start from the same line as the first
+
     def process(self, pose, t):
         cur = self._standing(pose)
         if cur is None:
             self.feedback = "Whole body must be visible (head to feet)"
             return
         if self.base is None:
-            self._calibrate(cur)
+            start = getattr(self, "_start", None)
+            if start is not None and abs(cur["ank_x"] - start["ank_x"]) * start["cm_per_px"] > self.BACK_TO_LINE_CM:
+                # standing still at the landing spot is not a new start - wait until they are back at the line
+                self.calib.clear()
+                self.feedback = "Walk back to the start line"
+                return
+            if self._calibrate(cur) and start is None:
+                self._start = dict(self.base)
             return
         cpp = self.base["cm_per_px"]
         moved = abs(cur["ank_x"] - self.base["ank_x"]) * cpp
-        # take-off = BOTH feet off the floor (walking only lifts one foot at a time)
+        # take-off = BOTH feet off the floor (walking only lifts one foot at a time); if the far foot is hidden,
+        # the visible foot must lift and the hips must rise too
         lifted = min(self.base["l_ank_y"] - cur["l_ank_y"], self.base["r_ank_y"] - cur["r_ank_y"]) * cpp
-        if not self.airborne and lifted > 4:
-            self.airborne = True
-            self.feedback = "Jump!"
+        hip_up = (self.base["hip_y"] - cur["hip_y"]) * cpp
+        off = lifted > 4 and (cur["both_feet"] or hip_up > 3)
+        if getattr(self, "_landing", None) is not None:
+            self._finish_landing(cur, t)
+            return
+        if not self.airborne:
+            self._up_n = self._up_n + 1 if off else 0
+            if self._up_n >= 2:
+                self.airborne = True
+                self._flight = []
+                self.feedback = "Jump!"
         elif self.airborne:
-            on_floor = abs(cur["ank_y"] - self.base["ank_y"]) * cpp < 4
-            if on_floor and moved > 20:
-                self.land_frames += 1
-                if self.land_frames >= 4:
-                    self.airborne, self.land_frames = False, 0
-                    self.attempts.append(moved)
-                    self.count = len(self.attempts)
-                    self.feedback = f"Jump {len(self.attempts)}: {moved:.0f} cm - walk back to the start line"
-                    self.event("rep", f"{moved:.0f} centimetres")
-                    if len(self.attempts) >= self.ATTEMPTS:
-                        self.finished = True
-                    else:
-                        self.base = None
-            else:
-                self.land_frames = 0
+            # landed = the feet have stopped (a camera that is a little tilted or not exactly side-on makes the
+            # floor slope in the picture, so "back at the starting height" is not a reliable landing test)
+            self._flight.append((t, cur["ank_x"], cur["ank_y"]))
+            recent = [f for f in self._flight if t - f[0] <= 0.25][-6:]
+            if moved > 20 and len(recent) >= 3:
+                span = max(math.hypot(a[1] - b[1], a[2] - b[2]) for a in recent for b in recent) * cpp
+                if span < 8:
+                    self.airborne, self._up_n = False, 0
+                    land_px = abs(median(f[1] for f in recent) - self.base["ank_x"])
+                    self._flight = []
+                    self._landing = {"px": land_px, "ank_x": median(f[1] for f in recent), "t": t, "calib": []}
+                    self.feedback = "Hold the landing…"
+            return
+
+    def _finish_landing(self, cur, t):
+        """Turn the landing into cm. If the athlete stands still at the landing spot, the body size there gives
+        a second scale (a jump towards or away from the camera changes the size), and the two are averaged."""
+        L, cpp0 = self._landing, self.base["cm_per_px"]
+        near = abs(cur["ank_x"] - L["ank_x"]) * cpp0 < 15
+        if near:
+            L["calib"].append(cur["body_px"])
+        done = (t - L["t"] >= 1.5 and len(L["calib"]) >= 6) or not near or t - L["t"] > 2.5
+        if not done:
+            return
+        cpp = cpp0
+        if len(L["calib"]) >= 6:
+            tall = sorted(L["calib"])[len(L["calib"]) // 2:]          # standing up again, not the crouched landing
+            body = median(tall)
+            if abs(body - self.base["body_px"]) < 0.25 * self.base["body_px"]:
+                cpp = (cpp0 + (self.height_cm * 0.88) / max(body, 1)) / 2
+        moved = L["px"] * cpp
+        self._landing = None
+        self.attempts.append(moved)
+        self.count = len(self.attempts)
+        self.feedback = f"Jump {len(self.attempts)}: {moved:.0f} cm - walk back to the start line"
+        self.event("rep", f"{moved:.0f} centimetres")
+        if len(self.attempts) >= self.ATTEMPTS:
+            self.finished = True
+        else:
+            self.base = None
 
 
 class SitAndReach(Exercise):
@@ -840,7 +1069,7 @@ class SitAndReach(Exercise):
             self.feedback = "Sit side-on - hip, knee, foot and hand must be visible"
             return
         hp, kn, an, ft, fi = (pose.p(i) for i in side)
-        if angle(hp, kn, an) < self.STRAIGHT_LEG:
+        if self.sm("knee", angle(hp, kn, an), t) < self.STRAIGHT_LEG:
             self.feedback = "Keep your knees straight"
             self.window.clear()
             return
@@ -854,14 +1083,25 @@ class SitAndReach(Exercise):
         while self.window and t - self.window[0][0] > self.HOLD:
             self.window.popleft()
         vals = [r for _, r in self.window]
-        if self.window and t - self.window[0][0] >= self.HOLD * 0.9 and max(vals) - min(vals) < 3:
-            held = sum(vals) / len(vals)
+        if self.window and t - self.window[0][0] >= self.HOLD * 0.9 and len(vals) >= 5 and self._still(self.window):
+            held = median(vals)
             if self.best is None or held > self.best + 0.5:
                 self.best = held
                 self.event("rep", f"{held:.0f} centimetres")
             self.feedback = f"Held {held:+.0f} cm - best {self.best:+.0f} cm"
         else:
             self.feedback = f"Reach… {reach:+.0f} cm"
+
+    @staticmethod
+    def _still(window) -> bool:
+        """Held = the reach isn't moving: the trend over the last second is under 4 cm/s and the points stay
+        within a few cm of it (camera jitter on the fingertip is allowed, sliding forward or bouncing isn't)."""
+        ts = [t for t, _ in window]; vs = [v for _, v in window]
+        n = len(ts); mt, mv = sum(ts) / n, sum(vs) / n
+        stt = sum((x - mt) * (x - mt) for x in ts)
+        slope = sum((x - mt) * (y - mv) for x, y in zip(ts, vs)) / stt if stt > 1e-9 else 0.0
+        res = sorted(abs(y - (mv + slope * (x - mt))) for x, y in zip(ts, vs))
+        return abs(slope) < 4.0 and res[int(0.8 * (n - 1))] < 5.0
 
     def value(self):
         return self.best if self.best is not None else 0.0
@@ -909,11 +1149,22 @@ class FlamingoBalance(Exercise):
             self.feedback = "Whole body must be visible"
             return
         body = max(pose.mid(L_ANKLE, R_ANKLE)[1] - pose.p(NOSE)[1], 1)
-        lifted = abs(pose.p(L_ANKLE)[1] - pose.p(R_ANKLE)[1]) / body > self.LIFT
+        lifted = self.sm("lift", abs(pose.p(L_ANKLE)[1] - pose.p(R_ANKLE)[1]) / body, t) > self.LIFT
+        if lifted and not self.balancing:
+            if getattr(self, "_up_since", None) is None:
+                self._up_since = t
+            if t - self._up_since < 0.5:              # a wobble while getting into position is not a start
+                self.feedback = "Hold the position…"
+                return
+        elif not lifted and not self.balancing:
+            self._up_since = None
         if lifted:
             self.down_since = None
             if not self.balancing:
                 self.balancing = True
+                if getattr(self, "_up_since", None) is not None:
+                    dt = t - self._up_since              # the settling half-second counts once confirmed
+                self._up_since = None
                 self.event("start", "Balancing")
             self.balance_time += dt
             self.feedback = f"Balancing… {int(self.balance_time)} s · falls {self.falls}"
@@ -974,9 +1225,8 @@ class PlateTapping(Exercise):
             y = c[1] + 0.9 * shw
             # Image left/right (the athlete sees a mirrored preview)
             self.targets = {"left": (c[0] - 1.3 * shw, y, 0.45 * shw), "right": (c[0] + 1.3 * shw, y, 0.45 * shw)}
-        hands = [pose.p(i) for i in (L_WRIST, R_WRIST, L_INDEX, R_INDEX) if pose.vis(i)]
         tx, ty, r = self.targets[self.next_side]
-        if any(math.hypot(hx - tx, hy - ty) < r for hx, hy in hands):
+        if self._touched(pose, (tx, ty), r, shw):
             self.touches += 1
             if self.t_first is None:
                 self.t_first = t
@@ -990,6 +1240,37 @@ class PlateTapping(Exercise):
                 self.feedback = f"Done in {self.value():.1f} s"
                 return
         self.feedback = f"Cycles {self.count}/{self.CYCLES} - touch the {self.next_side.upper()} target"
+
+    @staticmethod
+    def _seg_dist(p, a, b) -> float:
+        """Distance from point p to the segment a-b (where the hand passed between two frames)."""
+        ax, ay = a; bx, by = b; px, py = p
+        dx, dy = bx - ax, by - ay
+        L = dx * dx + dy * dy
+        u = 0.0 if L <= 1e-9 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L))
+        return math.hypot(ax + u * dx - px, ay + u * dy - py)
+
+    def _touched(self, pose, target, r, shw) -> bool:
+        prev = getattr(self, "_prev_hand", {})
+        now = {i: pose.p(i) for i in (L_WRIST, R_WRIST, L_INDEX, R_INDEX) if pose.vis(i)}
+        self._prev_hand = now
+        hit = False
+        for wr, ix in ((L_WRIST, L_INDEX), (R_WRIST, R_INDEX)):
+            d = {}
+            for i in (wr, ix):
+                if i not in now:
+                    continue
+                a = prev.get(i)
+                if a is None or math.hypot(now[i][0] - a[0], now[i][1] - a[1]) > 3.0 * shw:
+                    a = now[i]                       # first sight, or a jump no hand can make in one frame
+                d[i] = self._seg_dist(target, a, now[i])
+            # a touch: a hand point is on the target now (as before), or the hand passed over it between two frames
+            # (fast tapping at 10-15 fps) - for a pass-over, wrist and fingertip must both have crossed it
+            if any(math.hypot(now[i][0] - target[0], now[i][1] - target[1]) < r for i in d):
+                hit = True
+            elif len(d) == 2 and max(d.values()) < r:
+                hit = True
+        return hit
 
     def value(self):
         if self.t_first is None:

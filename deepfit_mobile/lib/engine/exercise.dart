@@ -35,10 +35,37 @@ abstract class Exercise {
   double? mirrorValue; // audio mirror 0..1 (null = no tone)
   String mirrorLabel = '';
   final List<double> _mirrorHist = [];
+  Smoother sm = Smoother(); // median filter for every signal a threshold is applied to
+  final Map<String, List<double>> _bones = {};
 
   Exercise({double heightCm = 165.0}) : heightCm = heightCm == 0 ? 165.0 : heightCm;
 
   int get lastEventId => _eventId;
+
+  /// False when a body segment suddenly looks much longer or shorter than it has been - one landmark was
+  /// put in the wrong place for a frame (bones can't stretch). Such frames are skipped, not counted.
+  bool bonesOk(BodyPose pose, List<List<int>> pairs, {double lo = 0.65, double hi = 1.5}) {
+    final lens = <MapEntry<String, double>>[
+      for (final p in pairs)
+        if (pose.vis([p[0], p[1]])) MapEntry('${p[0]}-${p[1]}', pose.dist(p[0], p[1])) // only points the model is sure of
+    ];
+    var bad = false;
+    for (final e in lens) {
+      final d = _bones[e.key];
+      if (d != null && d.length >= 8) {
+        final m = medianOf(d);
+        if (m > 0 && !(lo * m <= e.value && e.value <= hi * m)) bad = true;
+      }
+    }
+    if (!bad) {
+      for (final e in lens) {
+        final d = _bones.putIfAbsent(e.key, () => <double>[]);
+        d.add(e.value);
+        if (d.length > 45) d.removeAt(0);
+      }
+    }
+    return !bad;
+  }
 
   void event(String kind, String text) {
     _eventId += 1;
@@ -103,19 +130,43 @@ abstract class Exercise {
       };
 }
 
-/// Two-threshold rep counter with a little debouncing.
+/// Median of each signal over the last ~0.22 s (at least 3 frames) - a copy of Smoother in exercise_engine.py.
+/// Pose models jitter and now and then put a landmark in the wrong place for a frame or two; a median removes
+/// that without lagging behind real movement.
+class Smoother {
+  final double window;
+  final int minN;
+  final Map<String, List<List<double>>> _buf = {};
+
+  Smoother({this.window = 0.22, this.minN = 3});
+
+  double call(String key, double v, double t) {
+    final d = _buf.putIfAbsent(key, () => <List<double>>[]);
+    d.add([t, v]);
+    if (d.length > 64) d.removeAt(0);
+    while (d.length > minN && t - d.first[0] > window) {
+      d.removeAt(0);
+    }
+    return medianOf(d.map((e) => e[1]));
+  }
+}
+
+/// Two-threshold rep counter with a little debouncing (frames in a row) and a minimum time between stage
+/// changes (a real movement can't flip down/up faster than minGap).
 class RepState {
   String? stage;
   String? prev;
   final int frames;
+  final double minGap;
   String? _pending;
   int _n = 0;
+  double _tChange = -1e9;
 
-  RepState([this.frames = 2]);
+  RepState([this.frames = 2, this.minGap = 0.0]);
 
   /// Feed 'down'/'up'/null each frame; returns the new stage when it changes.
   /// [prev] tells which stage it came from (null at the very start).
-  String? see(String? s) {
+  String? see(String? s, [double? t]) {
     if (s == null || s == stage) {
       _pending = null;
       _n = 0;
@@ -127,11 +178,12 @@ class RepState {
       _pending = s;
       _n = 1;
     }
-    if (_n >= frames) {
+    if (_n >= frames && (t == null || stage == null || t - _tChange >= minGap)) {
       prev = stage;
       stage = s;
       _pending = null;
       _n = 0;
+      if (t != null) _tChange = t;
       return s;
     }
     return null;

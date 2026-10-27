@@ -100,6 +100,8 @@ def build(doc: Dict, replay: Optional[Dict], identity: Dict) -> Dict:
         payload["load_kg"] = doc["load_kg"]
     if doc.get("timing"):                         # runs timed by the phone's GPS: method, verdict and the track are signed
         payload.update(timing=doc["timing"], run_verdict=doc.get("run_verdict"), track_hash=doc.get("track_hash"))
+    if doc.get("identity_scope"):                 # what the result proves about who ran (signed, shown in plain words)
+        payload["identity_scope"] = doc["identity_scope"]
     sig = sign(payload)
     return {"v": VERSION, "payload": payload, "sig": sig, "token": sig[:16],
             "athlete_token": athlete_token(doc["athlete_ref"])}
@@ -121,11 +123,24 @@ def verify(doc: Dict, replay: Optional[Dict]) -> Tuple[bool, List[str]]:
     if "load_kg" in payload or doc.get("load_kg") is not None:
         if payload.get("load_kg") != doc.get("load_kg"):
             problems.append("'load_kg' (the dumbbell weight) was changed after signing.")
-    for field in ("timing", "run_verdict", "track_hash"):
+    for field in ("timing", "run_verdict", "track_hash", "identity_scope"):
         if (field in payload or doc.get(field) is not None) and payload.get(field) != doc.get(field):
-            problems.append(f"'{field}' (how the run was timed) was changed after signing.")
+            problems.append(f"'{field}' (how the run was timed or who was checked) was changed after signing.")
     if payload.get("replay_hash") != replay_hash(replay):
         problems.append("The movement replay does not match the signed result.")
     if not hmac.compare_digest(sign(payload), pp.get("sig", "")):
         problems.append("Signature check failed - the passport data was edited.")
     return (not problems), problems
+
+
+def identity_scope_text(scope) -> str:
+    """Plain words for the passport: what this timed result proves about who did it."""
+    s = str(scope or "")
+    if s == "time_entered":
+        return "Time entered by hand with the stopwatch - the phone did not watch the run."
+    if s.startswith("start_mid") and s.endswith("_finish"):
+        n = s[len("start_mid"):-len("_finish")]
+        return f"Face matched at the start, at {n} random points during the run, and at the finish."
+    if s == "start_finish":
+        return "Face checked at the start and the finish only - not during the run (self-recorded)."
+    return ""

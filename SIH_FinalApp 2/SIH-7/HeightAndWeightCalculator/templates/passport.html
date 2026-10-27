@@ -47,6 +47,7 @@
             </div>
         </div>
         <div class="muted" style="margin-top:8px">Recorded {{ p.timestamp|replace('T', ' ')|replace('Z', ' UTC') }}{% if p.coach_timed %} · coach-timed with stopwatch{% elif p.timing == 'gps' %} · timed by the phone (GPS + step count){% if p.run_verdict == 'needs_recheck' %} · <b style="color:var(--amber)">flagged: needs a re-check</b>{% endif %}{% endif %}</div>
+        {% if p.identity_scope|who_ran %}<div class="muted" style="margin-top:4px">🪪 Who: {{ p.identity_scope|who_ran }}</div>{% endif %}
     </div>
 
     <div class="card">

@@ -15,9 +15,9 @@
 // The server recomputes every score AND the game points from the raw measurements
 // (arena_score.py), so the leaderboard can't be faked by editing this file.
 
-import * as ART from './art.js?v=2';
+import * as ART from './art.js?v=3';
 import { sfx, tone, audio, playMusic, stopMusic, setMuted, duck, beatPulse, SOUND } from './sound.js?v=2';
-import { LandmarkFilter, classifyMove, MoveTracker, PunchDetector } from './motion.js?v=2';
+import { LandmarkFilter, classifyMove, MoveTracker, PunchDetector, bodyInfo as bodyInfoPx, DodgeReader, JumpMeter, SideAnswer, StepCounter } from './motion.js?v=3';
 
 const CFG = JSON.parse(document.getElementById('arena-cfg').textContent);
 const Q = new URLSearchParams(location.search);
@@ -220,21 +220,9 @@ function say(text, { interrupt = true, wait = true } = {}) {
 }
 
 // ------------------------------------------------------------------ landmarks -> body measurements
-// lm: 33 x {x, y, v}, normalised, UN-mirrored (as the camera sees). Game logic works in
-// mirrored screen pixels so "move to the left of the screen" = "move to your own left".
-function bodyInfo(lm) {
-  const P = (i) => ({ x: (1 - lm[i].x) * S.vw, y: lm[i].y * S.vh, v: lm[i].v });
-  const ls = P(11), rs = P(12), lh = P(23), rh = P(24), la = P(27), ra = P(28), nose = P(0), le = P(2), re = P(5);
-  const lk = P(25), rk = P(26);
-  const ank = (la.y + ra.y) / 2;
-  return {
-    hipX: (lh.x + rh.x) / 2, hipY: (lh.y + rh.y) / 2, shX: (ls.x + rs.x) / 2, shY: (ls.y + rs.y) / 2,
-    sw: Math.max(8, Math.abs(ls.x - rs.x)), nose, ankY: ank, bodyPx: ank - nose.y, lk, rk,
-    full: [0, 23, 24, 27, 28].every((i) => lm[i].v >= 0.5),
-    upper: [0, 11, 12].every((i) => lm[i].v >= 0.5),          // head + shoulders (hips may be behind a desk)
-    face: [0, 2, 5].every((i) => lm[i].v >= 0.5), eyeDist: Math.hypot(le.x - re.x, le.y - re.y),
-  };
-}
+// lm: 33 x {x, y, v}, normalised, UN-mirrored (as the camera sees). Game logic works in mirrored screen pixels so
+// "move to the left of the screen" = "move to your own left". The same function the camera tests use (motion.js).
+const bodyInfo = (lm) => bodyInfoPx(lm, S.vw, S.vh);
 // Dance moves are read by motion.js (classifyMove + MoveTracker): smoothed points, a held and settled pose.
 function editDistance(a, b) {
   const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
@@ -483,14 +471,14 @@ class Calibrate extends Level {
     }
     if (!fullOk) { this.hist = []; if (this.kind === 'full' && now - this.nag > 6000) { this.nag = now; say(this.text, { wait: false }); } return; }
     this.upSince = null;
-    this.hist.push({ t: now, x: b.hipX, y: b.hipY, sw: b.sw, bp: b.bodyPx, ank: b.ankY });
+    this.hist.push({ t: now, x: b.hipX, y: b.hipY, sw: b.sw, bp: b.bodyPx, ank: b.ankY, torso: b.torso });
     this.hist = this.hist.filter((h) => now - h.t < 1500);
     this.prog = clamp((now - this.hist[0].t) / 1300, 0, 1);
     if (this.hist.length < 15 || now - this.hist[0].t < 1300) return;
     const xs = this.hist.map((h) => h.x), ys = this.hist.map((h) => h.y);
     if (Math.max(...xs) - Math.min(...xs) > 0.04 * b.bodyPx || Math.max(...ys) - Math.min(...ys) > 0.03 * b.bodyPx) { this.hist = this.hist.slice(-3); return; }
     S.base = { hipX: median(xs), hipY: median(ys), sw: median(this.hist.map((h) => h.sw)), bodyPx: median(this.hist.map((h) => h.bp)),
-               ankY: median(this.hist.map((h) => h.ank)) };
+               ankY: median(this.hist.map((h) => h.ank)), torso: median(this.hist.map((h) => h.torso)) };
     S.calib = { method: 'pose', cm_per_px: (CFG.heightCm * 0.88) / S.base.bodyPx, body_px: Math.round(S.base.bodyPx) };
     // SAM 3.1: the whole person, head to feet -> exact pixels per cm (pose has no point on top of the head)
     samBoxes('person').then((boxes) => {
@@ -541,26 +529,15 @@ class Dodge extends Level {
     } else if (this.state === 'wait') {
       if (now >= this.tGo) {
         this.side = Math.random() < 0.5 ? 'L' : 'R'; this.t0 = now; this.state = 'cue';
-        this.onset = null; this.pend = null; this.peak = 0; this.lastX = b ? b.hipX : null; this.lastT = now;
+        this.reader = new DodgeReader(); this.reader.start(now, this.side === 'L' ? 1 : -1, { hipX: S.base.hipX, sw: S.base.sw });
         sfx.whoosh(this.side === 'L' ? -1 : 1, 450);
         if (S.mode === 'blind') say(T('raider'), { wait: false });
         SIM && SIM.cue('dodge', { side: this.side, now });
       }
     } else if (this.state === 'cue') {
-      const safe = this.side === 'L' ? 1 : -1;
-      if (b) {
-        const d = b.hipX - S.base.hipX, dt = (now - this.lastT) / 1000;
-        if (dt > 0 && this.lastX != null) this.peak = Math.max(this.peak, ((b.hipX - this.lastX) / dt / S.base.sw) * safe);
-        this.lastX = b.hipX; this.lastT = now;
-        // reaction time from the RAW points (no smoothing lag), counted only if the next frame agrees (no jitter blips)
-        const rb = S.bodyRaw, dr = rb ? rb.hipX - S.base.hipX : 0;
-        if (!this.onset && rb) {
-          if (Math.abs(dr) > 0.25 * S.base.sw) {
-            if (this.pend && this.pend.dir === Math.sign(dr)) this.onset = this.pend; else this.pend = { rt: now - this.t0, dir: Math.sign(dr) };
-          } else this.pend = null;
-        }
-        if (d * safe > 0.8 * S.base.sw) return this.resolve(true, now);
-      }
+      // on each NEW camera frame (DodgeReader in motion.js): reaction time and sideways speed from the raw points,
+      // no smoothing lag; dodged = the smoothed hips get 0.8 shoulder widths to the safe side
+      if (S.fresh && (S.body || S.bodyRaw) && this.reader.feed(now, S.bodyRaw, S.body)) return this.resolve(true, now);
       if (now - this.t0 > this.win) this.resolve(false, now);
     } else if (this.state === 'feedback' && now > this.tNext) {
       this.i++; if (this.i >= this.n) return this.finish(true);
@@ -568,8 +545,8 @@ class Dodge extends Level {
     }
   }
   resolve(ok, now) {
-    const safe = this.side === 'L' ? 1 : -1;
-    const t = { side: this.side, ok, rt: this.onset ? Math.round(this.onset.rt) : null, wrong_first: this.onset ? this.onset.dir !== safe : false, peak_v: +this.peak.toFixed(2) };
+    const r = this.reader.result();
+    const t = { side: this.side, ok, rt: r.rt, wrong_first: r.wrong_first, peak_v: r.peak_v };
     S.raw.dodge.push(t);
     this.ok = ok; this.state = 'feedback'; this.tNext = now + 900; this.tRes = now; markDot(ok); success(ok);
     if (ok) {
@@ -603,31 +580,31 @@ class Jump extends Level {
   constructor(n, speed) { super('jump'); this.n = n; this.travel = 2200 / speed; this.i = 0; this.hist = []; this.logs = []; }
   start(now) { S.dots = []; setDots(this.n); this.next(now + 700); }
   next(at) {
-    this.state = 'roll'; this.rawY = []; this.t0 = at; this.tArr = at + this.travel; this.peak = 0; this.tPeak = null; this.beeped = false; this.lastBeep = 0; this.live = 0;
+    this.state = 'roll'; this.meter = null; this.t0 = at; this.tArr = at + this.travel; this.beeped = false; this.lastBeep = 0; this.live = 0;
     this.logs.push({ t0: at, tArr: this.tArr, hit: null });
     SIM && SIM.cue('jump', { tArr: this.tArr });
   }
   update(now) {
     const b = S.body;
-    if (b) { this.hist.push({ t: now, y: b.hipY }); this.hist = this.hist.filter((h) => now - h.t < 4000); }
+    if (b && S.fresh) { this.hist.push({ t: now, y: b.hipY }); this.hist = this.hist.filter((h) => now - h.t < 4000); }
     if (this.state !== 'roll') return;
     if (S.mode === 'blind' && now - this.lastBeep > 260 && now < this.tArr) {   // approaching tone, rising pitch
       this.lastBeep = now; const p = clamp((now - this.t0) / this.travel, 0, 1); tone(400 + 700 * p, 70, { pan: 1 - p });
     }
     if (!this.beeped && now > this.tArr - 220) { this.beeped = true; sfx.go(); ART.floatText(headPoint().x, headPoint().y - 60 * DPR, T('jump_now'), { color: '#fde047', size: 70 * DPR, life: 0.6 }); }
     const winStart = this.tArr - 400, winEnd = this.tArr + 300;
-    if (now >= winStart && now <= winEnd && b) {
-      const ref = this.hist.filter((h) => h.t > this.t0 - 200 && h.t < winStart - 100).map((h) => h.y);
-      const base = ref.length ? median(ref) : S.base.hipY;
-      this.rawY = (this.rawY || []).concat(S.bodyRaw ? [S.bodyRaw.hipY] : []).slice(-3);
-      const rise = base - (this.rawY.length ? median(this.rawY) : b.hipY);
-      this.live = Math.max(0, rise * (S.calib.cm_per_px || 0.5));
-      if (rise > this.peak) { this.peak = rise; this.tPeak = now; }
+    if (now >= winStart && now <= winEnd && S.fresh) {
+      // the hips just before the log came = standing height; then the raw hips of each new camera frame. The top
+      // of the jump is fitted to the free-fall curve; rising on the toes (< 8 cm) is not a jump (JumpMeter, motion.js)
+      if (!this.meter) {
+        const ref = this.hist.filter((h) => h.t > this.t0 - 200 && h.t < winStart - 100).map((h) => h.y);
+        this.meter = new JumpMeter(); this.meter.start(ref.length ? median(ref) : S.base.hipY, S.calib.cm_per_px || 0.5, S.base.torso || null);
+      }
+      this.meter.feed(now, S.bodyRaw); this.live = this.meter.live();
     }
     if (now > winEnd) {
-      const cm = this.peak * (S.calib.cm_per_px || 0.5);
-      const ok = cm >= 5 && this.tPeak != null;
-      const t = { ok, rise_px: Math.round(this.peak), cm: +cm.toFixed(1), timing: this.tPeak ? Math.round(this.tPeak - this.tArr) : null };
+      const r = this.meter ? this.meter.result() : { ok: false, cm: 0, tPeak: null }, ok = r.ok, cm = r.cm;
+      const t = { ok, rise_px: Math.round(cm / (S.calib.cm_per_px || 0.5)), cm, timing: r.tPeak != null ? Math.round(r.tPeak - this.tArr) : null };
       S.raw.jump.push(t); this.logs[this.logs.length - 1].hit = !ok;
       markDot(ok); success(ok);
       if (ok) {
@@ -663,19 +640,16 @@ class Jump extends Level {
 }
 
 class Escape extends Level {
-  constructor(secs) { super('escape'); this.secs = secs; this.steps = 0; this.sign = 0; this.gap = 0; this.rate = 0; this.lastStep = 0; }
+  constructor(secs) { super('escape'); this.secs = secs; this.steps = 0; this.counter = new StepCounter(); this.gap = 0; this.rate = 0; this.lastStep = 0; }
   start(now) {
     this.t0 = now; this.state = 'run'; this.gap = 3; sfx.go();
     SIM && SIM.cue('escape', { until: this.t0 + this.secs * 1000 });
   }
   update(now) {
     if (this.state !== 'run') return;
-    const b = S.body, dt = Math.min(0.05, (now - (this.lastT || now)) / 1000); this.lastT = now;
-    if (b) {   // a step = the knees swap which one is higher
-      const d = b.lk.y - b.rk.y, thr = 0.05 * S.base.bodyPx;
-      let stepped = false;
-      if (d > thr && this.sign !== 1) { if (this.sign) { this.steps++; stepped = true; } this.sign = 1; }
-      else if (d < -thr && this.sign !== -1) { if (this.sign) { this.steps++; stepped = true; } this.sign = -1; }
+    const dt = Math.min(0.05, (now - (this.lastT || now)) / 1000); this.lastT = now;
+    if (S.fresh && S.bodyRaw) {   // a step = the knees swap which one is higher (StepCounter, motion.js: raw points, new frames)
+      const stepped = this.counter.feed(now, S.bodyRaw, S.base.bodyPx); this.steps = this.counter.steps;
       if (stepped) {
         this.rate = this.rate * 0.7 + 0.3 * (1000 / Math.max(120, now - (this.lastStep || now - 500))); this.lastStep = now;
         sfx.step(); ART.dust(V(S.base.hipX, 0).x, V(0, S.base.ankY).y, 2);
@@ -735,7 +709,7 @@ class Pulse extends Level {
     }
     if (this.state !== 'measure') return;
     if (!close) { if (now - this.nag > 3000) { this.nag = now; caption(T('pulse_back')); } return; }
-    const rgb = roiMean(skinRects(lm, this.samRect));
+    const rgb = S.fresh ? roiMean(skinRects(lm, this.samRect)) : null;      // one colour sample per camera frame
     if (rgb) this.meter.add(now, rgb);
     if (now - this.tLast > 1000) { this.tLast = now; const e = this.meter.estimate(); if (e && e.quality > 0.2) this.live = e.bpm; }
     if (this.meter.seconds >= this.secs) {
@@ -791,9 +765,10 @@ class Bowler extends Level {
         this.state = 'occluded'; S.darkTarget = 1; sfx.lightsOut(); caption(T('where'));
         if (S.mode !== 'blind') ART.floatText(VIEW.W / 2, VIEW.H * 0.3, '⚡ ' + T('lights'), { color: '#fde047', size: 58 * DPR, life: 1.0 });
       }
-      if (b && t > 1100 && !this.answer) {
-        const d = posX(b) - S.base.hipX;                  // step - or lean, in the upper-body game
-        if (Math.abs(d) > (S.scope === 'upper' ? 0.4 : 0.45) * S.base.sw) { this.answer = d < 0 ? 'L' : 'R'; this.rt = Math.round(now - this.t0 - this.tOcc); }
+      if (b && S.bodyRaw && S.fresh && t > 1100 && !this.answer) {
+        // a step - or a lean, in the upper-body game - seen in the smoothed AND raw points on two new frames
+        const a = this.reading.feed(now, posX(S.bodyRaw), posX(b));
+        if (a) { this.answer = a.side; this.rt = Math.round(a.t - this.t0 - this.tOcc); }
       }
       if (S.mode === 'blind' && this.state === 'anim' && t > 1300 && now - (this.lastBeep || 0) > 120) {
         this.lastBeep = now; const pan = (this.target === 'L' ? -1 : 1) * clamp((t - 1300) / 900, 0, 1) * 0.9;
@@ -808,6 +783,7 @@ class Bowler extends Level {
   begin(now) {
     this.level = this.levels[this.i]; this.target = this.targets[this.i]; this.answer = null; this.rt = null;
     this.t0 = now; this.state = 'anim'; S.darkTarget = 0;
+    this.reading = new SideAnswer(); this.reading.start(S.base.hipX, S.base.sw, S.scope === 'upper' ? 0.4 : 0.45);
     this.tOcc = 1750 + { easy: 180, medium: 0, hard: -150 }[this.level];
     if (S.mode === 'blind') this.tOcc = 1300 + { easy: 450, medium: 300, hard: 150 }[this.level];
     setDots(this.n, this.level.toUpperCase());
@@ -1022,7 +998,7 @@ function localProfile(raw) {
     const ok = d.filter((t) => t.ok), rts = ok.map((t) => t.rt).filter((r) => r != null && r >= 120 && r <= 2000);
     const pk = ok.map((t) => t.peak_v).filter((p) => p != null && p <= 15);
     tr.reflex = rts.length ? +(100 * c01((900 - median(rts)) / 650)).toFixed(1) : null;
-    tr.agility = +(100 * (0.5 * ok.length / d.length + 0.5 * c01((pk.length ? median(pk) : 0) / 4))).toFixed(1);
+    tr.agility = +(100 * (0.5 * ok.length / d.length + 0.5 * c01((pk.length ? median(pk) : 0) / 8))).toFixed(1);
   }
   if ((raw.jump || []).length) { const hs = raw.jump.filter((j) => j.ok).map((j) => j.cm); tr.power = +(100 * c01((hs.length ? Math.max(...hs) : 0) / 45)).toFixed(1); }
   const bw = (raw.bowler || []).filter((t) => t.answer);
@@ -1242,7 +1218,7 @@ async function startCamera() {
   const v = $('cam');
   const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 720 } }, audio: false });
   v.srcObject = stream; await v.play();
-  S.src = v; S.vw = v.videoWidth || 640; S.vh = v.videoHeight || 480;
+  S.src = v; S.vw = v.videoWidth || 640; S.vh = v.videoHeight || 480; S.camAt = 0; watchCamera(v);
 }
 async function loadPose() {
   const mod = await import(`${MP_BASE}/vision_bundle.mjs`);
@@ -1531,6 +1507,21 @@ function placeView(W, H, dt) {
   const k = VIEW.ready ? Math.min(1, dt * 4) : 1;               // glide, don't jump, between levels
   VIEW.s += (s - VIEW.s) * k; VIEW.ox += (ox - VIEW.ox) * k; VIEW.oy += (oy - VIEW.oy) * k; VIEW.ready = true;
 }
+// The game draws at 60 Hz but a webcam gives 10-30 pictures a second. Running the pose model again on the same
+// picture wastes time on slow laptops and, worse, a repeated picture looks like "stood still, then jumped": speeds
+// came out too high and "two frames agree" checks were fooled. So the model runs only when the camera has a new
+// picture (requestVideoFrameCallback where the browser has it and it is firing, else the video's clock).
+let camFrames = 0, camSeen = -1, camLastT = -1;
+function watchCamera(v) {
+  if (!v || !v.requestVideoFrameCallback) return;
+  const cb = () => { camFrames++; S.camAt = performance.now(); try { v.requestVideoFrameCallback(cb); } catch (e) { /* ignore */ } };
+  try { v.requestVideoFrameCallback(cb); } catch (e) { /* ignore */ }
+}
+function newCameraFrame(now) {
+  if (SIM) return true;
+  if (S.camAt && now - S.camAt < 500) { if (camFrames === camSeen) return false; camSeen = camFrames; return true; }
+  const t = S.src.currentTime; if (t === camLastT) return false; camLastT = t; return true;
+}
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - (S.lastNow || now)) / 1000); S.lastNow = now;
@@ -1539,10 +1530,13 @@ function frame(now) {
   if (S.src) placeView(W, H, dt);
   if (S.src) {
     if (SIM) SIM.render(now);
-    S.lmRaw = detect(now);
-    S.lm = LMF.step(S.lmRaw, now);                       // smoothed points: steadier body, moves, avatar and pulse patch
-    S.body = S.lm ? bodyInfo(S.lm) : null;
-    S.bodyRaw = S.lmRaw ? bodyInfo(S.lmRaw) : null;      // raw points: reaction time, jump peak and punches (no lag at all)
+    S.fresh = newCameraFrame(now);
+    if (S.fresh) {
+      S.lmRaw = detect(now);
+      S.lm = LMF.step(S.lmRaw, now);                       // smoothed points: steadier body, moves, avatar and pulse patch
+      S.body = S.lm ? bodyInfo(S.lm) : null;
+      S.bodyRaw = S.lmRaw ? bodyInfo(S.lmRaw) : null;      // raw points: reaction time, jump peak, steps, punches (no lag)
+    }
     if (S.level && S.running) S.level.update(now);
     if (S.level && S.running && FULL_BODY_LEVELS.includes(S.level.key) && S.body && !S.body.full) {
       S.noFeet = S.noFeet || now;
