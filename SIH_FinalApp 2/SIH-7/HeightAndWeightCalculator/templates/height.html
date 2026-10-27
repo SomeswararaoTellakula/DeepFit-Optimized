@@ -271,21 +271,37 @@
             50% { transform: scale(1.1); opacity: 0.7; }
             100% { transform: scale(1); opacity: 1; }
         }
+        /* Result card (same look as the info panel) */
+        .result-panel { text-align: center; }
+        .result-panel .big { display: flex; justify-content: center; gap: 40px; margin: 18px 0 8px; }
+        .result-panel .big b { display: block; font-size: 44px; color: #22d3ee; line-height: 1.1; }
+        .result-panel .big span { font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 1px; }
+        .result-panel .note { color: #cbd5e1; font-size: 13px; margin-top: 8px; }
+        .mic { color: #94a3b8; }
+        .mic.on { color: #4ade80; }
+        .mic.heard { color: #fde047; }
+        .feedback-line { position: absolute; bottom: 82px; left: 50%; transform: translateX(-50%); max-width: 80%;
+                         background: rgba(0, 0, 0, 0.6); padding: 6px 16px; border-radius: 20px; font-size: 14px; z-index: 95; }
+        @media (max-width: 700px) {
+            .info-grid { grid-template-columns: 1fr; }
+            .controls-row { flex-wrap: wrap; justify-content: center; width: 92%; }
+            .result-panel .big b { font-size: 32px; }
+        }
     </style>
 </head>
 <body>
     <div class="exercise-container">
         <!-- Top Left Back -->
-        <a href="/" class="back-btn">
+        <a href="/" class="back-btn" title="Back">
             <i class="fas fa-arrow-left"></i>
         </a>
 
         <!-- Top Right Shortcuts -->
         <div class="shortcuts-legend">
-            <div class="shortcut-item"><span class="key">S</span> Save</div>
+            <div class="shortcut-item"><span class="key">S</span> Capture</div>
             <div class="shortcut-item"><span class="key">F</span> Submit</div>
             <div class="shortcut-item"><span class="key">R</span> Reset</div>
-            <div class="shortcut-item"><span class="key">C</span> Auto-save (Always ON)</div>
+            <div class="shortcut-item"><span class="key">🎤</span> <span class="mic" id="micStatus">Say "capture"</span></div>
             <div class="shortcut-item"><span class="key">Q</span> Quit</div>
         </div>
 
@@ -293,11 +309,11 @@
         <div class="stats-overlay" id="statsOverlay" style="display: none;">
             <div class="stat-item-v2">
                 <span class="stat-label-v2">Height</span>
-                <span class="stat-value-v2" id="heightDisplay">0.0 cm</span>
+                <span class="stat-value-v2" id="heightDisplay">-- cm</span>
             </div>
             <div class="stat-item-v2">
                 <span class="stat-label-v2">Weight</span>
-                <span class="stat-value-v2" id="weightDisplay">0.0 kg</span>
+                <span class="stat-value-v2" id="weightDisplay">-- kg</span>
             </div>
             <div class="stat-item-v2">
                 <span class="stat-label-v2">Confidence</span>
@@ -305,309 +321,71 @@
             </div>
         </div>
 
-        <!-- Info Panel (Dullness killer) -->
+        <!-- Info Panel -->
         <div class="info-panel" id="infoPanel">
             <div style="text-align: center; margin-bottom: 25px;">
                 <i class="fas fa-robot fa-3x pulse-icon" style="color: #06b6d4; margin-bottom: 15px;"></i>
                 <h2 style="margin: 0; color: white;">AI System Ready</h2>
                 <p style="color: #64748b; font-size: 14px;">Advanced Body Metric Estimation Engine</p>
             </div>
-
             <div class="info-grid">
                 <div class="info-section">
                     <h4><i class="fas fa-list-check"></i> Measurement Rules</h4>
                     <ul class="info-list">
                         <li><i class="fas fa-circle"></i> Stand 2-3 meters from camera</li>
-                        <li><i class="fas fa-circle"></i> Full body must be visible</li>
-                        <li><i class="fas fa-circle"></i> Keep background clear</li>
-                        <li><i class="fas fa-circle"></i> Wear form-fitting clothes</li>
+                        <li><i class="fas fa-circle"></i> Full body must be visible (head to feet)</li>
+                        <li><i class="fas fa-circle"></i> Face the camera, arms down, feet together</li>
+                        <li><i class="fas fa-circle"></i> Wear form-fitting clothes, no shoes or cap</li>
                     </ul>
                 </div>
                 <div class="info-section">
                     <h4><i class="fas fa-person-walking"></i> Instructions</h4>
                     <ul class="info-list">
                         <li><i class="fas fa-chevron-right"></i> Verify face for security</li>
-                        <li><i class="fas fa-chevron-right"></i> Stand straight with hands down</li>
-                        <li><i class="fas fa-chevron-right"></i> Stay still for 5 seconds</li>
-                        <li><i class="fas fa-chevron-right"></i> Result saves automatically</li>
+                        <li><i class="fas fa-chevron-right"></i> Press Open Exercise and stand straight</li>
+                        <li><i class="fas fa-chevron-right"></i> Stay still for 5 seconds - or say "capture"</li>
+                        <li><i class="fas fa-chevron-right"></i> Your height and weight are spoken and saved</li>
                     </ul>
                 </div>
             </div>
         </div>
 
-        <!-- Video Area -->
-        <div class="video-wrapper">
-            <img id="videoFeed" src="" style="display: none;">
-            <video id="webcamPreview" autoplay playsinline style="display: none;"></video>
-            <canvas id="captureCanvas" style="display: none;"></canvas>
-            
-            <!-- Placeholder is now handled by Info Panel -->
-            <div id="placeholder" class="placeholder-v2" style="display: none;"></div>
+        <!-- Result -->
+        <div class="info-panel result-panel" id="resultPanel" style="display: none;">
+            <h2 style="margin: 0; color: white;"><i class="fas fa-check-circle" style="color:#4ade80"></i> Measured</h2>
+            <div class="big">
+                <div><b id="resHeight">--</b><span>Height</span></div>
+                <div><b id="resWeight">--</b><span>Weight</span></div>
+            </div>
+            <div class="note" id="resNote"></div>
+            <div class="note" style="color:#64748b">Press <b>Submit (F)</b> to see all your results, or <b>Reset (R)</b> to measure again.</div>
         </div>
 
-        <!-- Auto-save Badge -->
-        <div class="auto-save-badge" id="autoSaveStatus" style="display: none;">
-            Auto-saved: 0/10
+        <!-- Video Area -->
+        <div class="video-wrapper">
+            <img id="videoFeed" src="" alt="" style="display: none;">
+            <video id="webcamPreview" autoplay playsinline style="display: none;"></video>
+            <div id="placeholder" class="placeholder-v2" style="display: none;"></div>
         </div>
+        <div class="feedback-line" id="feedbackLine" style="display: none;"></div>
+
+        <!-- Samples badge -->
+        <div class="auto-save-badge" id="autoSaveStatus" style="display: none;">Measuring 0/40</div>
 
         <!-- Controls Row -->
         <div class="controls-row">
             <button id="verifyFaceBtn" class="action-btn btn-verify">Verify Face</button>
             <button id="openExerciseBtn" class="action-btn btn-open" style="display: none;">Open Exercise</button>
-            
-            <!-- Standard Exercise Controls -->
-            <button id="startBtn" class="action-btn btn-start" style="display: none;">Start</button>
-            <button id="recordBtn" class="action-btn btn-record" style="display: none;">Record</button>
-            <button id="stopBtn" class="action-btn btn-stop" style="display: none;">Stop</button>
-            <button id="saveBtn" class="action-btn btn-save" style="display: none;">Save (S)</button>
-            <button id="submitBtn" class="action-btn btn-submit" style="display: none;">Submit (F) 0/10</button>
+            <button id="saveBtn" class="action-btn btn-save" style="display: none;">Capture (S)</button>
+            <button id="submitBtn" class="action-btn btn-submit" style="display: none;">Submit (F)</button>
             <button id="resetBtn" class="action-btn btn-reset" style="display: none;">Reset (R)</button>
-            <button id="autoBtn" class="action-btn btn-auto" style="display: none;">Auto ON</button>
         </div>
     </div>
 
     <!-- Core Scripts -->
     <script src="{{ url_for('static', filename='js/notification-system.js') }}"></script>
     {% include 'partials/verify_view.html' %}
-    
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // UI Elements
-            const videoFeed = document.getElementById('videoFeed');
-            const webcamPreview = document.getElementById('webcamPreview');
-            const captureCanvas = document.getElementById('captureCanvas');
-            const placeholder = document.getElementById('placeholder');
-            const infoPanel = document.getElementById('infoPanel');
-            const statsOverlay = document.getElementById('statsOverlay');
-            
-            // Buttons
-            const verifyFaceBtn = document.getElementById('verifyFaceBtn');
-            const openExerciseBtn = document.getElementById('openExerciseBtn');
-
-            // ---- Step 1: live face verification shown in the main video area ----
-            let verifyStream = null;
-            async function startVerifyCamera() {
-                if (verifyStream) return;
-                try {
-                    verifyStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    webcamPreview.srcObject = verifyStream;
-                    VerifyView.done = false;
-                    infoPanel.style.display = 'none';      // don't cover the live view
-                    VerifyView.show();
-                } catch (e) {
-                    notificationSystem.show('Camera access denied: ' + e.message, 'error');
-                }
-            }
-            function stopVerifyCamera() {
-                if (verifyStream) verifyStream.getTracks().forEach(t => t.stop());
-                verifyStream = null;
-            }
-            VerifyView.attach({
-                container: document.querySelector('.video-wrapper'),
-                video: webcamPreview,
-                onHidden: () => { if (videoFeed.style.display !== 'block') infoPanel.style.display = 'block'; }
-            });
-            // keep the status message clear of the button row and the back button
-            if (VerifyView.wrap) {
-                VerifyView.wrap.querySelector('.vv-status').style.bottom = '95px';
-                VerifyView.wrap.querySelector('.vv-tag').style.left = '75px';
-                VerifyView.wrap.querySelector('.vv-tag').style.top = '28px';
-            }
-            startVerifyCamera();
-
-            verifyFaceBtn.addEventListener('click', async function () {
-                verifyFaceBtn.disabled = true;
-                verifyFaceBtn.textContent = 'Verifying...';
-                try { await VerifyView.prepare(); } catch (e) { verifyFaceBtn.disabled = false; verifyFaceBtn.textContent = 'Verify Face'; return; }
-                verifyStream = webcamPreview.srcObject;
-                VerifyView.busy();
-                try {
-                    const response = await fetch('/api/verify_user_identity', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ frame_data: VerifyView.captureFrame() })
-                    });
-                    const result = await response.json();
-                    if (result.success && result.is_match) {
-                        VerifyView.success();
-                        stopVerifyCamera();
-                        verifyFaceBtn.style.display = 'none';
-                        openExerciseBtn.style.display = 'inline-block';
-                    } else {
-                        VerifyView.fail(result.message || result.error);
-                        verifyFaceBtn.disabled = false;
-                        verifyFaceBtn.textContent = 'Verify Face';
-                    }
-                } catch (e) {
-                    VerifyView.fail('Could not reach the server');
-                    verifyFaceBtn.disabled = false;
-                    verifyFaceBtn.textContent = 'Verify Face';
-                }
-            });
-            
-            // ... (rest of buttons)
-            
-            let statsInterval = null;
-            let identityCheckInterval = null;
-            let identityMismatchCount = 0;
-            const MAX_MISMATCHES = 2;
-
-            async function startIdentityCheck() {
-                // Identity is now re-checked every 2 s on the server while the camera runs
-                // (identity_guard.LiveIdentityMonitor), so the browser no longer opens a second camera.
-                return;
-                if (identityCheckInterval) return;
-                
-                identityCheckInterval = setInterval(async () => {
-                    if (!videoFeed.src) return;
-                    
-                    try {
-                        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                        const tempVideo = document.createElement('video');
-                        tempVideo.srcObject = stream;
-                        tempVideo.autoplay = true;
-                        tempVideo.playsInline = true;
-                        
-                        await new Promise(resolve => {
-                            tempVideo.onloadedmetadata = () => resolve();
-                        });
-                        
-                        const canvas = document.createElement('canvas');
-                        canvas.width = tempVideo.videoWidth || 640;
-                        canvas.height = tempVideo.videoHeight || 480;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(tempVideo, 0, 0);
-                        const frameData = canvas.toDataURL('image/jpeg');
-                        
-                        stream.getTracks().forEach(t => t.stop());
-                        
-                        const response = await fetch('/api/verify_user_identity', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ frame_data: frameData })
-                        });
-                        
-                        const result = await response.json();
-                        
-                        if (result.success) {
-                            if (result.is_match) {
-                                identityMismatchCount = 0;
-                                console.log('Height: Identity verified during session');
-                            } else {
-                                identityMismatchCount++;
-                                console.warn(`Height: Identity mismatch detected (${identityMismatchCount}/${MAX_MISMATCHES})`);
-                                
-                                if (identityMismatchCount >= MAX_MISMATCHES) {
-                                    stopSession();
-                                    alert('Identity verification failed! Session stopped. Only the registered user can perform measurements.');
-                                }
-                            }
-                        }
-                    } catch (error) {
-                        console.error('Height: Continuous identity check error:', error);
-                    }
-                }, 15000);
-            }
-
-            function stopIdentityCheck() {
-                if (identityCheckInterval) {
-                    clearInterval(identityCheckInterval);
-                    identityCheckInterval = null;
-                }
-                identityMismatchCount = 0;
-            }
-
-            function stopSession() {
-                fetch('/height/stop_camera', { method: 'POST' });
-                videoFeed.style.display = 'none';
-                videoFeed.src = '';
-                statsOverlay.style.display = 'none';
-                placeholder.style.display = 'flex';
-                placeholder.innerHTML = '<h3>⛔ Session Stopped</h3><p>Identity mismatch or manual stop.</p>';
-                
-                document.querySelectorAll('.action-btn').forEach(btn => {
-                    if (btn.id !== 'verifyFaceBtn') {
-                        btn.style.display = 'none';
-                    }
-                });
-                verifyFaceBtn.style.display = 'inline-block';
-                verifyFaceBtn.disabled = false;
-                verifyFaceBtn.textContent = 'Verify Face';
-                openExerciseBtn.style.display = 'none';
-                
-                if (statsInterval) {
-                    clearInterval(statsInterval);
-                    statsInterval = null;
-                }
-                stopIdentityCheck();
-            }
-
-            // Step 2: Open Exercise
-            openExerciseBtn.addEventListener('click', async function() {
-                openExerciseBtn.style.display = 'none';
-                infoPanel.style.display = 'none';
-                placeholder.style.display = 'flex';
-                placeholder.innerHTML = '<h3>🚀 Initializing AI...</h3>';
-                
-                try {
-                    const response = await fetch('/height/start_camera', { method: 'POST' });
-                    const result = await response.json();
-
-                    if (result.status === 'success') {
-                        videoFeed.src = window.location.origin + '/height/video_feed?' + new Date().getTime();
-                        videoFeed.style.display = 'block';
-                        placeholder.style.display = 'none';
-                        statsOverlay.style.display = 'flex';
-                        
-                        // Show exercise controls
-                        document.querySelectorAll('.action-btn').forEach(btn => {
-                            if (btn.id !== 'verifyFaceBtn' && btn.id !== 'openExerciseBtn') {
-                                btn.style.display = 'inline-block';
-                            }
-                        });
-                        
-                        startStatsPolling();
-                        startIdentityCheck();
-                    } else {
-                        throw new Error(result.message);
-                    }
-                } catch (error) {
-                    notificationSystem.show('Error: ' + error.message, 'error');
-                    openExerciseBtn.style.display = 'inline-block';
-                    infoPanel.style.display = 'block';
-                }
-            });
-
-            // Polling
-            function startStatsPolling() {
-                statsInterval = setInterval(async () => {
-                    try {
-                        const response = await fetch('/height/get_stats');
-                        const stats = await response.json();
-                        
-                        // Check for identity error from backend
-                        if (stats.identity_error) {
-                            stopSession();
-                            alert('A different person was detected. Session stopped - only the registered athlete can be measured.');
-                            return;
-                        }
-
-                        heightDisplay.textContent = stats.height.toFixed(1) + ' cm';
-                        weightDisplay.textContent = stats.weight.toFixed(1) + ' kg';
-                        confidenceDisplay.textContent = stats.confidence + '%';
-                    } catch (e) {}
-                }, 1000);
-            }
-
-            // Keyboard Shortcuts
-            document.addEventListener('keydown', (e) => {
-                const key = e.key.toLowerCase();
-                if (key === 's') saveBtn.click();
-                if (key === 'f') submitBtn.click();
-                if (key === 'r') resetBtn.click();
-                if (key === 'q') window.location.href = '/';
-            });
-        });
-    </script>
+    <script>window.CLASSIC = {{ (classic or {})|tojson }};</script>
+    <script src="{{ url_for('static', filename='js/classic_height.js', v='1') }}"></script>
 </body>
 </html>

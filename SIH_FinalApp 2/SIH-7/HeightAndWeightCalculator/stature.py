@@ -26,6 +26,12 @@ hair/posture ~0.5 cm, lens distortion of wide webcams up to ~1 cm (keep the athl
 of the picture). No camera method can promise 99.99 % - that is +/-0.02 cm, finer than a school
 stadiometer (+/-0.1-0.5 cm) or the change in a person's height between morning and evening (~1 cm).
 
+NO SHEETS ("just stand")
+Without the sheets the body itself is the ruler, as in the original DeepFit estimator: the spacing of the eyes
+and the width of the shoulders have known average sizes (smaller for children, so they go by age). One person's
+can be ~5 % off the average, so this is an ESTIMATE, typically within about +/-5-8 cm. Weight is then a typical
+weight for that height and age - the camera cannot weigh - so no BMI is made from it.
+
 WEIGHT
 A camera cannot weigh. DeepFit reads the athlete's bathroom scale instead: a photo of the display
 goes to a vision model (Muse Spark, or the Groq fallback - see llm.py) which reads the number, so
@@ -461,6 +467,86 @@ def bmi_info(height_cm: Optional[float], weight_kg: Optional[float], age=None) -
     return {"bmi": bmi, "bmi_category": cat, "bmi_note": note}
 
 
+# ------------------------------------------------------------------ no sheets: the body itself is the ruler
+
+L_EYE, R_EYE = 2, 5
+IPD_BY_AGE = [(4, 4.9), (6, 5.1), (8, 5.3), (10, 5.5), (12, 5.7), (14, 5.9), (16, 6.05)]    # eye spacing, cm (children)
+IPD_ADULT = {"male": 6.4, "female": 6.1}
+SHOULDER_BY_AGE = [(4, 24.0), (6, 26.0), (8, 28.0), (10, 30.0), (12, 32.0), (14, 34.5), (16, 36.5)]   # shoulder width, cm
+SHOULDER_ADULT = {"male": 41.2, "female": 36.8}
+BMI_BY_AGE = [(5, 15.3), (8, 15.7), (10, 16.5), (12, 17.7), (14, 19.3), (16, 20.5)]    # WHO BMI-for-age medians
+BMI_ADULT = {"male": 23.0, "female": 22.0}
+BODY_NEED = 40             # frames standing still before it measures by itself (~3-5 s)
+BODY_MIN = 8               # frames needed before "capture" can give a number
+BODY_UNCERTAINTY_CM = 8
+
+
+def _sex(g) -> Optional[str]:
+    g = str(g or "").strip().lower()
+    return "female" if g in ("f", "female", "girl", "woman") else "male" if g in ("m", "male", "boy", "man") else None
+
+
+def _by_age(table, adult: Dict[str, float], age, sex) -> float:
+    """Average size for this age (children) or sex (adults); both sexes averaged when unknown."""
+    grown = adult.get(sex) if sex else (adult["male"] + adult["female"]) / 2
+    try:
+        a = float(age)
+    except (TypeError, ValueError):
+        return grown
+    if a >= 18:
+        return grown
+    pts = table + [(18, grown)]
+    if a <= pts[0][0]:
+        return pts[0][1]
+    for (a0, v0), (a1, v1) in zip(pts, pts[1:]):
+        if a0 <= a <= a1:
+            return v0 + (v1 - v0) * (a - a0) / (a1 - a0)
+    return grown
+
+
+def typical_weight(height_cm: float, age=None, sex=None) -> float:
+    """A typical (median-BMI) weight for this height and age - an estimate, not a weighing."""
+    return round(_by_age(BMI_BY_AGE, BMI_ADULT, age, sex) * (height_cm / 100) ** 2, 1)
+
+
+def body_estimate(lm, mask: Optional[np.ndarray], w: int, h: int, age=None, sex=None) -> Dict:
+    """One frame, no sheets: height from the body's own proportions. {"height_cm", "by_eyes", "by_shoulders"} or {"problem"}."""
+    if lm is None:
+        return {"problem": "no_person"}
+    vis = lambda *ids: all(lm[i][2] >= 0.5 for i in ids)
+    if not vis(NOSE, L_EYE, R_EYE, L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_ANKLE, R_ANKLE):
+        return {"problem": "body_not_whole"}
+    P = lambda i: (lm[i][0] * w, lm[i][1] * h)
+    if vis(L_KNEE, R_KNEE):
+        knees = [angle(P(L_HIP), P(L_KNEE), P(L_ANKLE)), angle(P(R_HIP), P(R_KNEE), P(R_ANKLE))]
+        if min(knees) < 160:
+            return {"problem": "body_not_straight"}
+    sh_y = (P(L_SHOULDER)[1] + P(R_SHOULDER)[1]) / 2
+    ny = P(NOSE)[1]
+    top = head_top(mask, lm, w, h) if mask is not None else None
+    top_y = top[1] if top else ny - 0.78 * (sh_y - ny)          # head top ~0.78 x nose-to-shoulders above the nose
+    ext = body_extent(mask, lm, w, h) if mask is not None else None
+    if ext:
+        sole_y = ext["bottom"]
+    else:
+        sole_y = max([P(i)[1] for i in (L_HEEL, R_HEEL, L_FOOT, R_FOOT) if lm[i][2] >= 0.5] or [P(L_ANKLE)[1], P(R_ANKLE)[1]])
+    if top_y <= 1 or sole_y >= h - 2:
+        return {"problem": "body_not_whole"}
+    px = sole_y - top_y
+    ipd_px = math.dist(P(L_EYE), P(R_EYE))
+    sh_px = math.dist(P(L_SHOULDER), P(R_SHOULDER))
+    if ipd_px < 4 or sh_px < 12 or px < 0.25 * h:
+        return {"problem": "body_too_far"}
+    if sh_px < 0.13 * px:                                       # shoulders look narrow: turned side-on
+        return {"problem": "body_face_camera"}
+    by_eyes = px * _by_age(IPD_BY_AGE, IPD_ADULT, age, sex) / ipd_px
+    by_shoulders = px * _by_age(SHOULDER_BY_AGE, SHOULDER_ADULT, age, sex) / sh_px
+    est = (0.9 * by_eyes + 0.7 * by_shoulders) / 1.6            # the original estimator's weights
+    if not 70 <= est <= 230:
+        return {"problem": "body_unsure"}
+    return {"height_cm": float(est), "by_eyes": float(by_eyes), "by_shoulders": float(by_shoulders)}
+
+
 PROBLEM_TEXT = {
     "no_reference": "Can't see the FLOOR sheet - stand it on the floor against the wall next to your heels, fully in view",
     "no_top_reference": "Now tape the TOP sheet on the wall anywhere above your head (no measuring needed)",
@@ -471,6 +557,11 @@ PROBLEM_TEXT = {
     "marker_not_on_floor": "Put the FLOOR sheet on the floor against the wall, right next to your heels",
     "no_mask": "Body outline not available - update MediaPipe or use another browser/camera",
     "no_outline": "Can't see your outline clearly - stand against a plain wall, no bag or loose clothes",
+    "body_not_whole": "Step back - your head and feet must both be in the picture",
+    "body_not_straight": "Stand straight, feet together, arms down",
+    "body_too_far": "Come a little closer to the camera",
+    "body_face_camera": "Face the camera",
+    "body_unsure": "Hold still - can't read your size yet",
 }
 
 
@@ -509,8 +600,12 @@ class HeightWeight(Exercise):
         self.age = None
         self.problems: Dict[str, int] = {}
         self.camera: Optional[Dict] = None
+        self.sex: Optional[str] = None
+        self.body_samples: List[float] = []        # no sheets: estimates from the body's own proportions
+        self.body_parts: List = []
+        self.body: Optional[Dict] = None
 
-    def configure(self, weight_kg=None, weight_source=None, weight_detail=None, age=None, **_):
+    def configure(self, weight_kg=None, weight_source=None, weight_detail=None, age=None, sex=None, **_):
         try:
             if weight_kg is not None and 10 <= float(weight_kg) <= 250:
                 self.weight_kg = round(float(weight_kg), 1)
@@ -519,6 +614,7 @@ class HeightWeight(Exercise):
             pass
         self.weight_detail = weight_detail if isinstance(weight_detail, dict) else None
         self.age = age
+        self.sex = _sex(sex)
 
     def process(self, pose, t):
         if self.stable is None:
@@ -533,6 +629,9 @@ class HeightWeight(Exercise):
         if m.get("refs"):
             self.ref = m["refs"]
         if "problem" in m:
+            if m["problem"] == "no_reference" and not self.samples:     # no sheets on the wall: estimate from the body
+                self._body_frame(lm, mask, bgr.shape[1], bgr.shape[0])
+                return
             self.problems[m["problem"]] = self.problems.get(m["problem"], 0) + 1
             self.feedback = PROBLEM_TEXT[m["problem"]]
             return
@@ -548,9 +647,88 @@ class HeightWeight(Exercise):
         else:
             self.feedback = f"Hold still… measuring ({min(len(self.samples), NEED_SAMPLES)}/{NEED_SAMPLES})"
 
+    # ---- no sheets: "just stand"
+    def _body_frame(self, lm, mask, w, h):
+        e = body_estimate(lm, mask, w, h, self.age, self.sex)
+        if "problem" in e:
+            self.problems[e["problem"]] = self.problems.get(e["problem"], 0) + 1
+            self.feedback = PROBLEM_TEXT[e["problem"]]
+            return
+        self.body_samples = (self.body_samples + [e["height_cm"]])[-120:]
+        self.body_parts = (self.body_parts + [(e["by_eyes"], e["by_shoulders"])])[-120:]
+        n = len(self.body_samples)
+        if n >= BODY_NEED:
+            self._finish_body("auto")
+        else:
+            self.feedback = f"Stand still… measuring ({n}/{BODY_NEED}) - or say 'capture'"
+
+    def _body_reading(self) -> Optional[Dict]:
+        if len(self.body_samples) < BODY_MIN:
+            return None
+        v = sorted(self.body_samples[-BODY_NEED:])
+        k = len(v) // 4
+        mid = v[k:len(v) - k] or v
+        est = median(v)
+        parts = self.body_parts[-BODY_NEED:]
+        by_eyes, by_sh = median(p[0] for p in parts), median(p[1] for p in parts)
+        spread = (mid[-1] - mid[0]) / 2
+        # how well the two rulers agree and how steady the reading is (not an accuracy promise)
+        agree = abs(by_eyes - by_sh) / est
+        conf = int(max(20, min(90, round(92 - 250 * agree - 250 * spread / est))))
+        return {"height_cm": round(est, 1), "spread_cm": round(spread, 1), "samples": len(v), "by_eyes_cm": round(by_eyes, 1),
+                "by_shoulders_cm": round(by_sh, 1), "confidence": conf}
+
+    def _finish_body(self, how: str):
+        r = self._body_reading()
+        if r is None:
+            return
+        self.body = {**r, "how": how}
+        self.finished = True
+        w = self.weight_kg or typical_weight(r["height_cm"], self.age, self.sex)
+        self.feedback = f"Height ≈ {r['height_cm']:.0f} cm · weight ≈ {w:.0f} kg"
+        self.event("rep", f"About {r['height_cm']:.0f} centimetres")
+
+    def capture(self) -> Optional[str]:
+        """'capture' (said aloud, or the S key): measure now with what the camera has seen. Returns a problem, or None."""
+        if self.finished:
+            return None
+        if self.samples:                                   # sheets on the wall: take the median so far
+            if len(self.samples) < 5:
+                return "Hold still a moment longer - then say 'capture' again"
+            v = sorted(self.samples[-NEED_SAMPLES * 2:])
+            k = len(v) // 4
+            mid = v[k:len(v) - k] or v
+            self.stable = {"height_cm": round(median(v), 1), "spread_cm": round((mid[-1] - mid[0]) / 2, 2), "samples": len(v)}
+            self.finished = True
+            self.feedback = f"Measured: {self.stable['height_cm']} cm"
+            self.event("rep", f"{self.stable['height_cm']} centimetres")
+            return None
+        if len(self.body_samples) >= BODY_MIN:
+            self._finish_body("capture")
+            return None
+        return "Stand in full view (head to feet) and hold still, then say 'capture' again"
+
+    def live(self) -> Dict:
+        """What the screen shows while measuring: height, weight and how steady the reading is."""
+        if self.stable or len(self.samples) >= 3:
+            hv = self.stable["height_cm"] if self.stable else round(median(self.samples[-9:]), 1)
+            return {"mode": "sheets", "height_cm": hv, "weight_kg": self.weight_kg, "weight_estimated": False,
+                    "confidence": 99 if self.stable else min(95, 50 + 2 * len(self.samples)),
+                    "samples": len(self.samples), "need": NEED_SAMPLES}
+        r = self.body or self._body_reading()
+        if r is None and self.body_samples:
+            r = {"height_cm": round(median(self.body_samples), 1), "confidence": 20}
+        if r is None:
+            return {"mode": "body", "height_cm": None, "weight_kg": None, "confidence": 0, "samples": 0, "need": BODY_NEED}
+        wv = self.weight_kg or typical_weight(r["height_cm"], self.age, self.sex)
+        return {"mode": "body", "height_cm": r["height_cm"], "weight_kg": wv, "weight_estimated": not self.weight_kg,
+                "confidence": r["confidence"], "samples": len(self.body_samples), "need": BODY_NEED}
+
     def value(self) -> float:
         if self.stable:
             return self.stable["height_cm"]
+        if self.body:
+            return self.body["height_cm"]
         return round(median(self.samples), 1) if len(self.samples) >= 5 else 0.0
 
     def stats(self):
@@ -559,9 +737,14 @@ class HeightWeight(Exercise):
         s["height"] = {"samples": len(self.samples), "need": NEED_SAMPLES, "reference": ref.get("kind") if ref.get("floor") else None,
                        "floor": bool(ref.get("floor")), "top": bool(ref.get("top")),
                        "live_cm": round(median(self.samples[-9:]), 1) if self.samples else None}
+        s["live"] = self.live()
         return s
 
     def result(self):
+        if not self.stable and not self.body and not self.samples and len(self.body_samples) >= BODY_MIN:
+            self._finish_body("time up")                  # time ran out: use what was seen
+        if self.body and not self.stable:
+            return self._body_result()
         r = super().result()
         h = self.value() or None
         r.update({"height_cm": h, "weight_kg": self.weight_kg, "weight_source": self.weight_source,
@@ -577,6 +760,27 @@ class HeightWeight(Exercise):
                                   "method": "floor + top reference sheets, head-top outline (MediaPipe), parallax-corrected"}})
         if not self.stable:
             r["incomplete"] = True
+        return r
+
+
+    def _body_result(self):
+        r = super().result()
+        b = self.body
+        real = self.weight_kg is not None
+        w = self.weight_kg if real else typical_weight(b["height_cm"], self.age, self.sex)
+        r.update({"height_cm": b["height_cm"], "weight_kg": w, "weight_source": self.weight_source if real else "estimate",
+                  "weight_detail": self.weight_detail,
+                  **(bmi_info(b["height_cm"], w, self.age) if real else
+                     {"bmi": None, "bmi_category": None,
+                      "bmi_note": "Height and weight are estimates from your body. BMI needs your weight from a scale."}),
+                  "estimate": True,
+                  "measurement": {"reference": "body", "estimate": True, "uncertainty_cm": BODY_UNCERTAINTY_CM,
+                                  "samples": b["samples"], "spread_cm": b["spread_cm"], "stable": True,
+                                  "confidence": b["confidence"], "by_eyes_cm": b["by_eyes_cm"],
+                                  "by_shoulders_cm": b["by_shoulders_cm"], "how": b["how"], "problems": self.problems,
+                                  "method": "estimated from body proportions (eye spacing and shoulder width), no wall sheets; "
+                                            "weight = typical for that height and age"}})
+        r.pop("incomplete", None)
         return r
 
 

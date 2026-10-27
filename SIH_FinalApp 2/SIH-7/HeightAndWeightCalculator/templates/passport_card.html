@@ -100,7 +100,7 @@
         </div>
 
         <div class="facts">
-            <div class="fact"><span class="lbl">Recorded</span><b>{{ p.timestamp|replace('T', ' ')|replace('Z', ' UTC') }}</b></div>
+            <div class="fact"><span class="lbl">Recorded</span><b>{{ p.timestamp|ist }}</b></div>
             <div class="fact"><span class="lbl">Face before test</span><b>{{ 'matched' if p.identity.pre_check_score is not none else p.identity.pre_check }}{% if p.identity.pre_check_score is not none %} ({{ '%.2f' % p.identity.pre_check_score }}){% endif %}</b></div>
             <div class="fact"><span class="lbl">Face during test</span><b>{{ p.identity.live_passes }} / {{ p.identity.live_checks }} matched</b></div>
         </div>

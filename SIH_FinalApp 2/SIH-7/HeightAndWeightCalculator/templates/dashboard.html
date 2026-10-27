@@ -410,10 +410,20 @@
             }
         }
 
-        function normalizeTimestamp(timestamp, sessionStart, submissionTime) {
-            const ts = timestamp || sessionStart || submissionTime;
-            if (!ts) return new Date();
-            return new Date(ts);
+        // Server times are UTC. Records saved by the test engine without a zone ('2026-10-27T15:27:41',
+        // '20261027_152741') are read as UTC too, so the browser shows them in India time.
+        function utcDate(t, rec) {
+            if (!t) return null;
+            t = String(t);
+            const m = t.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+            if (m && rec && rec.source === 'DeepFit test engine') return new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+            if (m) return new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+            if (/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(t) && rec && rec.source === 'DeepFit test engine') t += 'Z';
+            const d = new Date(t);
+            return isNaN(d) ? null : d;
+        }
+        function normalizeTimestamp(timestamp, sessionStart, submissionTime, rec) {
+            return utcDate(sessionStart, rec) || utcDate(timestamp, rec) || utcDate(submissionTime, rec) || new Date();
         }
 
         function processData(data) {
@@ -421,7 +431,7 @@
 
             data.dumbbell.forEach(session => {
                 allSessions.push({
-                    timestamp: normalizeTimestamp(session.timestamp, session.analysis_date, null),
+                    timestamp: normalizeTimestamp(session.timestamp, session.analysis_date, null, session),
                     type: 'dumbbell',
                     dumbbellReps: parseInt(session.total_reps) || 0,
                     situpReps: 0,
@@ -432,7 +442,7 @@
 
             data.situp.forEach(session => {
                 allSessions.push({
-                    timestamp: normalizeTimestamp(null, null, session.submission_time),
+                    timestamp: normalizeTimestamp(null, null, session.submission_time, session),
                     type: 'situp',
                     dumbbellReps: 0,
                     situpReps: parseInt(session.reps_completed) || 0,
@@ -443,7 +453,7 @@
 
             data.jump.forEach(session => {
                 allSessions.push({
-                    timestamp: normalizeTimestamp(null, session.session_start, session.submission_time),
+                    timestamp: normalizeTimestamp(null, session.session_start, session.submission_time, session),
                     type: 'jump',
                     dumbbellReps: 0,
                     situpReps: 0,
@@ -900,9 +910,9 @@
                 name: 'Vertical Jump',
                 icon: '<i class="fas fa-person-jumping"></i>', // vertical jump icon substitute
                 api: '/api/vertical_jump_data',
-                userField: 'total_jumps',
+                userField: 'max_height',
                 athleteField: 'Vertical_Jump_cm',
-                yLabel: 'Total Jumps'
+                yLabel: 'Best jump (cm)'
             },
             {
                 key: 'dumbbell',
@@ -968,17 +978,17 @@
                         // Situp: use submission_time and reps_completed
                         data = data.filter(d => d.reps_completed !== undefined);
                         userData = data.map(d => d.reps_completed);
-                        labels = data.map((d, i) => d.submission_time ? new Date(d.submission_time).toLocaleDateString() : `Session ${data.length - i}`);
+                        labels = data.map((d, i) => d.submission_time ? normalizeTimestamp(null, null, d.submission_time, d).toLocaleDateString() : `Session ${data.length - i}`);
                     } else if (ex.key === 'vertical_jump') {
-                        // Vertical jump: use session_start and total_jumps
-                        data = data.filter(d => d.total_jumps !== undefined);
-                        userData = data.map(d => d.total_jumps);
-                        labels = data.map((d, i) => d.session_start ? new Date(d.session_start).toLocaleDateString() : `Session ${data.length - i}`);
+                        // Vertical jump: the best height (cm) - the benchmark is in cm too
+                        data = data.filter(d => d.max_height !== undefined);
+                        userData = data.map(d => parseFloat(d.max_height) || 0);
+                        labels = data.map((d, i) => d.session_start ? normalizeTimestamp(null, d.session_start, null, d).toLocaleDateString() : `Session ${data.length - i}`);
                     } else if (ex.key === 'dumbbell') {
                         // Dumbbell: use analysis_date and total_reps
                         data = data.filter(d => d.total_reps !== undefined);
                         userData = data.map(d => d.total_reps);
-                        labels = data.map((d, i) => d.analysis_date ? new Date(d.analysis_date).toLocaleDateString() : `Session ${data.length - i}`);
+                        labels = data.map((d, i) => d.analysis_date ? normalizeTimestamp(null, d.analysis_date, null, d).toLocaleDateString() : `Session ${data.length - i}`);
                     }
                     // Dynamic athlete benchmark line
                     if (!athleteBenchmarks) {
@@ -1151,8 +1161,8 @@
                                     data = data.filter(d => d.reps_completed !== undefined);
                                     userData = data.map(d => d.reps_completed);
                                 } else if (ex.key === 'vertical_jump') {
-                                    data = data.filter(d => d.total_jumps !== undefined);
-                                    userData = data.map(d => d.total_jumps);
+                                    data = data.filter(d => d.max_height !== undefined);
+                                    userData = data.map(d => parseFloat(d.max_height) || 0);
                                 } else if (ex.key === 'dumbbell') {
                                     data = data.filter(d => d.total_reps !== undefined);
                                     userData = data.map(d => d.total_reps);
@@ -1171,7 +1181,7 @@
                             <h3>❌ Height/Weight Measurements Required</h3>
                             <p>Your profile is complete, but you need height/weight measurements for personalized benchmarks.</p>
                             <p><strong>Please complete the Height & Weight Analysis first:</strong></p>
-                            <button onclick="window.location.href='/ex/height_weight'" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; margin: 10px; cursor: pointer;">📏 Start Height & Weight Analysis</button>
+                            <button onclick="window.location.href='/height'" style="background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 6px; margin: 10px; cursor: pointer;">📏 Start Height & Weight Analysis</button>
                             <p style="font-size: 0.9em; color: #999;">After completing measurements, refresh this page to see your personalized benchmarks.</p>
                         </div>`;
                 }

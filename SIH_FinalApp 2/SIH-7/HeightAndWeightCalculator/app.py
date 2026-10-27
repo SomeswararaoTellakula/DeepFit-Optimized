@@ -39,6 +39,23 @@ from dynamic_benchmarks import DynamicBenchmarkSystem
 # Initialize Flask app
 from werkzeug.middleware.proxy_fix import ProxyFix
 app = Flask(__name__)
+try:      # numbers from numpy (body tracking maths) can't go into a JSON reply as they are: send them as plain values
+    from flask.json.provider import DefaultJSONProvider as _JSONProvider
+
+    class _NumpySafeJSON(_JSONProvider):
+        @staticmethod
+        def default(o):
+            import numpy as _np
+            if isinstance(o, _np.generic):
+                return o.item()
+            if isinstance(o, _np.ndarray):
+                return o.tolist()
+            return _JSONProvider.default(o)
+
+    app.json_provider_class = _NumpySafeJSON
+    app.json = _NumpySafeJSON(app)
+except ImportError:
+    pass
 # Enable ProxyFix to correctly handle Secure cookies behind Hugging Face's HTTPS proxy
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -196,15 +213,14 @@ def get_db():
     return None
 
 # Import and register blueprints after CORS setup
-# The three original test pages use the old MediaPipe API (mp.solutions), which new MediaPipe
-# releases (the only ones for the newest Python) no longer have. If they can't load, the site still
-# starts and their addresses open the same test in the shared engine (which works with every version).
-# Since the shared engine has its own Sit-ups, Vertical Jump and Dumbbell Curls (with face checks, the Talent
-# Passport and, for curls, the weight check), the old pages are switched OFF by default so each test exists once.
-# Their addresses open the engine test. DEEPFIT_LEGACY_PAGES=1 brings the old pages back.
+# Sit-ups, Vertical Jump and Dumbbell Curls keep their ORIGINAL screens (templates index_situp.html, ...), but the
+# test itself runs in the shared engine (face checks, Talent Passport, left/right curl counts) - the old
+# server-camera blueprints (situp_blueprint.py, ...) are no longer loaded, so each test exists once.
 from flask import Blueprint as _Blueprint
+from exercise_blueprint import classic_page as _classic_page
 LEGACY_MISSING = set()
-_LEGACY_ON = os.environ.get("DEEPFIT_LEGACY_PAGES", "0") == "1"
+# (DEEPFIT_LEGACY_PAGES is retired: the original screens themselves now run on the shared engine - classic_page)
+_LEGACY_ON = False
 for _mod, _bp_name, _prefix, _engine_key in (("situp_blueprint", "situp_bp", "/situp", "situps"),
                                              ("vertical_jump_blueprint", "vertical_jump_bp", "/vertical_jump", "vertical_jump"),
                                              ("dumbbell_blueprint", "dumbbell_bp", "/dumbbell", "dumbbell_curls")):
@@ -216,9 +232,10 @@ for _mod, _bp_name, _prefix, _engine_key in (("situp_blueprint", "situp_bp", "/s
         LEGACY_MISSING.add(_engine_key)
         if _LEGACY_ON:
             print(f"[DeepFit] {_mod} not loaded ({type(_e).__name__}: {_e}) - {_prefix} now opens /ex/{_engine_key}")
+        # the original screen, run by the shared engine (exercise_blueprint.classic_page)
         _fallback = _Blueprint(_bp_name, __name__)
-        _fallback.add_url_rule("/", _bp_name + "_home", (lambda k=_engine_key: redirect(f"/ex/{k}")))
-        _fallback.add_url_rule("/<path:_rest>", _bp_name + "_any", (lambda _rest=None, k=_engine_key: redirect(f"/ex/{k}")))
+        _fallback.add_url_rule("/", _bp_name + "_home", (lambda k=_engine_key: _classic_page(k)))
+        _fallback.add_url_rule("/<path:_rest>", _bp_name + "_any", (lambda _rest=None, p=_prefix: redirect(p + "/")))
         app.register_blueprint(_fallback, url_prefix=_prefix)
 from benchmark_routes import benchmark_bp
 from chatbot_routes import chatbot_bp
@@ -344,8 +361,8 @@ def serve_background():
 
 @app.route('/height')
 def height():
-    """Height & Weight is now a normal camera test (stature.py) - no separate program."""
-    return redirect('/ex/height_weight')
+    """Height & Weight: the original full-screen page, measured by the shared engine (stature.py)."""
+    return _classic_page('height_weight')
 
 @app.route('/verification')
 def verification():
@@ -855,8 +872,8 @@ def fitnesstwo():
 def height_detection():
     """Old entry points that launched a separate program - now the built-in camera test."""
     if request.method == 'GET':
-        return redirect('/ex/height_weight')
-    return jsonify({'status': 'moved', 'message': 'Height & Weight is now a built-in test', 'redirect_url': '/ex/height_weight'})
+        return redirect('/height')
+    return jsonify({'status': 'moved', 'message': 'Height & Weight is now a built-in test', 'redirect_url': '/height'})
 
 @app.route('/situps')
 def situps():
@@ -868,9 +885,7 @@ def situps_system():
     """Route to run app_situp.py logic"""
     if not session or 'user_id' not in session:
         return redirect(url_for('login'))
-    if "situps" in LEGACY_MISSING:
-        return redirect('/ex/situps')
-    return redirect(url_for('situp.index'))
+    return redirect('/situp/')
 
 @app.route('/result_analysis')
 def result_analysis():
@@ -1015,7 +1030,7 @@ def get_latest_measurement():
         # No measurement for this athlete. (Old fallbacks read the newest file on the server - someone else's
         # measurement - or returned sample numbers; both are gone: we never show numbers that aren't theirs.)
         return jsonify({'success': False, 'error': 'No height & weight measurement yet',
-                        'next_url': '/ex/height_weight'})
+                        'next_url': '/height'})
 
     except Exception as e:
         print(f"Error getting latest measurement: {e}")
@@ -1187,8 +1202,8 @@ def displaysitup():
 @app.route('/dumbbell')
 def dumbbell():
     """Route to start dumbbell curl detection system"""
-    if "dumbbell_curls" in LEGACY_MISSING:          # one version of the test: the engine's Dumbbell Curls
-        return redirect('/ex/dumbbell_curls')
+    if "dumbbell_curls" in LEGACY_MISSING:          # one version of the test: the original screen on the engine
+        return redirect('/dumbbell_ui')
     try:
         if not session or 'user_id' not in session:
             return redirect(url_for('login', next='dumbbell'))
@@ -1316,8 +1331,8 @@ def get_latest_situp_result():
 @app.route('/vertical_jump')
 def vertical_jump():
     """Route to start vertical jump detection system"""
-    if "vertical_jump" in LEGACY_MISSING:           # one version of the test: the engine's Vertical Jump
-        return redirect('/ex/vertical_jump')
+    if "vertical_jump" in LEGACY_MISSING:           # one version of the test: the original screen on the engine
+        return redirect('/vertical_jump_ui')
     try:
         # Import and run the advanced vertical jump system
         import subprocess
@@ -1335,13 +1350,19 @@ def vertical_jump():
         print(f"Error starting vertical jump detection: {e}")
         return jsonify({'status': False, 'message': str(e)})
 
+def _own_results():
+    """Mongo filter: the signed-in athlete's records only (nobody sees, or qualifies on, another athlete's results)."""
+    return {'user_email': session.get('user_email') or '__nobody__'}
+
+
 @app.route('/api/situp_data')
 def get_situp_data():
     """API endpoint to get situp data for visualizations"""
     try:
         if mongodb_connected:
             situps_collection = db['situps']
-            data = list(situps_collection.find().sort('submission_time', -1).limit(20))
+            # only the signed-in athlete's results (the cumulative dashboard and qualification use these)
+            data = list(situps_collection.find(_own_results()).sort('submission_time', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:
@@ -1401,7 +1422,7 @@ def get_dumbbell_data():
     try:
         if mongodb_connected:
             dumbbell_collection = db['DumbBell']
-            data = list(dumbbell_collection.find().sort('analysis_date', -1).limit(20))
+            data = list(dumbbell_collection.find(_own_results()).sort('analysis_date', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:
@@ -1515,7 +1536,7 @@ def get_vertical_jump_data():
         if mongodb_connected:
             # Use the correct collection name from MongoDB
             jump_collection = db['Vertical_Jump']
-            data = list(jump_collection.find().sort('session_start', -1).limit(20))
+            data = list(jump_collection.find(_own_results()).sort('session_start', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:
@@ -1577,14 +1598,14 @@ def create_sample_vertical_jump_data():
 def vertical_jump_ui():
     """Route for vertical jump UI page"""
     if "vertical_jump" in LEGACY_MISSING:
-        return redirect('/ex/vertical_jump')
+        return _classic_page('vertical_jump')
     return render_template('index_verticaljump.html')
 
 @app.route('/dumbbell_ui')
 def dumbbell_ui():
     """Route for dumbbell UI page"""
     if "dumbbell_curls" in LEGACY_MISSING:
-        return redirect('/ex/dumbbell_curls')
+        return _classic_page('dumbbell_curls')
     return render_template('index_dumbbell.html')
 
 @app.route('/displayVerticalJump')

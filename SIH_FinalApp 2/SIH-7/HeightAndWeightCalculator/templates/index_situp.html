@@ -157,6 +157,7 @@
                 <div class="instructions-card">
                     <h3>📋 Instructions</h3>
                     <ul>
+                        {% if ex %}{% for line in ex.setup if 'camera' in line or 'phone' in line %}<li>{{ line|replace('the phone', 'the camera') }}</li>{% endfor %}{% endif %}
                         <li>Lie down on your back with knees bent</li>
                         <li>Keep your feet flat on the ground</li>
                         <li>Place hands behind your head</li>
@@ -169,6 +170,23 @@
     </div>
 
     {% include 'partials/verify_view.html' %}
-    <script src="{{ url_for('static', filename='script.js', v='5') }}"></script>
+    <script>window.CLASSIC = {{ (classic or {})|tojson }};</script>
+    <script src="{{ url_for('static', filename='js/classic_test.js', v='1') }}"></script>
+    <script>
+        (function () {
+            const $ = (id) => document.getElementById(id);
+            ClassicTest.run({
+                doneTitle: 'Time Completed!',
+                doneText: 'Your sit-up session is complete. Press Submit to see your results.',
+                reset() { $('reps-count').textContent = '0'; $('form-percentage').textContent = '0%'; $('form-progress').style.width = '0%'; },
+                render(s, pulse) {
+                    const n = $('reps-count'), t = String(s.reps ?? 0);
+                    if (n.textContent !== t) { n.textContent = t; pulse(n); }
+                    $('form-percentage').textContent = (s.form_percentage ?? 0) + '%';
+                    $('form-progress').style.width = (s.form_percentage ?? 0) + '%';
+                },
+            });
+        })();
+    </script>
 </body>
 </html>

@@ -649,6 +649,7 @@ class DumbbellCurls(Exercise):
         self.state = {"left": "down", "right": "down"}
         self.counts = {"left": 0, "right": 0}
         self._t_state = {"left": -1e9, "right": -1e9}
+        self.arm_angle: Dict[str, Optional[float]] = {"left": None, "right": None}   # for the screen only
         # weight analysis (does not change counting, feedback or events - the phone app counts the same way)
         self.load_kg: Optional[float] = None
         self.body_weight_kg: Optional[float] = None
@@ -675,12 +676,14 @@ class DumbbellCurls(Exercise):
 
     def process(self, pose, t):
         seen = False
+        self.arm_angle = {"left": None, "right": None}
         for arm, (s, e, w) in {"left": (L_SHOULDER, L_ELBOW, L_WRIST), "right": (R_SHOULDER, R_ELBOW, R_WRIST)}.items():
             if not pose.vis(s, e, w):
                 continue
             seen = True
             raw = angle(pose.p(s), pose.p(e), pose.p(w))
             a = self.sm("a_" + arm, raw, t)                 # counting uses the smoothed angle...
+            self.arm_angle[arm] = a
             self._measure(arm, pose, (s, e, w), raw, t)     # ...the weight analysis keeps every raw detail
             if t - self._t_state[arm] < 0.2:           # a real curl can't flip faster than this
                 continue
@@ -762,6 +765,9 @@ class DumbbellCurls(Exercise):
     def stats(self):
         s = super().stats()
         s["left_reps"], s["right_reps"] = self.counts["left"], self.counts["right"]
+        for arm in ("left", "right"):                 # e.g. "Up · 48°" - what each arm is doing now
+            a = self.arm_angle.get(arm)
+            s[arm + "_status"] = "Not visible" if a is None else f"{self.state[arm].title()} · {a:.0f}°"
         s["load"] = {"load_kg": self.load_kg, "clean_reps": sum(1 for r in self.reps_detail if r["clean"]),
                      "last": self.reps_detail[-1] if self.reps_detail else None}
         return s
@@ -894,7 +900,14 @@ class _JumpBase(Exercise):
         s = super().stats()
         s["attempts"] = [round(a, 1) for a in self.attempts]
         s["calibrated"] = self.base is not None
+        s["airborne"] = bool(getattr(self, "airborne", False))
+        s["current_cm"] = round(getattr(self, "rise_now", 0.0), 1)
         return s
+
+    def result(self):
+        r = super().result()
+        r["attempts"] = [round(float(a), 1) for a in self.attempts]      # every jump, not only the best
+        return r
 
 
 class VerticalJump(_JumpBase):
@@ -916,6 +929,7 @@ class VerticalJump(_JumpBase):
             self._calibrate(cur)
             return
         rise = (self.base["hip_y"] - cur["hip_y"]) * self.base["cm_per_px"]
+        self.rise_now = max(0.0, rise)                # for the screen only
         if not self.airborne:
             self._up_n = self._up_n + 1 if rise > 6 else 0
             self._flight = (self._flight + [(t, rise)])[-2:]

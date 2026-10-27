@@ -136,6 +136,17 @@
     </div>
 
     <script>
+
+        // Server times are UTC; test-engine records without a zone are read as UTC so they show in India time.
+        function utcDate(t, rec) {
+            if (!t) return new Date(NaN);
+            t = String(t);
+            const eng = rec && rec.source === 'DeepFit test engine';
+            const m = t.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+            if (m) return eng ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+            if (eng && /^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(t)) t += 'Z';
+            return new Date(t);
+        }
         let progressionChart, individualChart, bodyAngleChart, kneeAngleChart;
 
         function startNewSession() {
@@ -155,7 +166,7 @@
                     document.getElementById('max-height-result').textContent = latest.max_height.toFixed(2) + ' cm';
                     document.getElementById('avg-height-result').textContent = latest.average_height.toFixed(2) + ' cm';
                     document.getElementById('total-jumps-result').textContent = latest.total_jumps;
-                    document.getElementById('session-start').textContent = new Date(latest.session_start).toLocaleString();
+                    document.getElementById('session-start').textContent = utcDate(latest.session_start, latest).toLocaleString();
 
                     document.querySelector('.results-container').style.display = 'block';
                     document.getElementById('no-data').style.display = 'none';
@@ -175,7 +186,7 @@
 
 
         function renderCharts(data) {
-            const sortedData = data.sort((a, b) => new Date(a.session_start) - new Date(b.session_start));
+            const sortedData = data.sort((a, b) => utcDate(a.session_start, a) - utcDate(b.session_start, b));
 
             // Jump Height Progression Chart
             const ctx1 = document.getElementById('progressionChart').getContext('2d');

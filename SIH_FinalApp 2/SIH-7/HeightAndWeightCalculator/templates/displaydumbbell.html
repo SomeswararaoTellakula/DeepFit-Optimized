@@ -153,6 +153,17 @@
             <button class="slider-arrow slider-arrow-right" onclick="showNextChart()">&#8594;</button>
         </div>
         <script>
+
+        // Server times are UTC; test-engine records without a zone are read as UTC so they show in India time.
+        function utcDate(t, rec) {
+            if (!t) return new Date(NaN);
+            t = String(t);
+            const eng = rec && rec.source === 'DeepFit test engine';
+            const m = t.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+            if (m) return eng ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+            if (eng && /^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(t)) t += 'Z';
+            return new Date(t);
+        }
             let currentChartIndex = 0;
             function showChartAt(idx) {
                 const total = 5;
@@ -275,7 +286,7 @@
                         document.getElementById('total-reps-result').textContent = latest.total_reps || '0';
                         document.getElementById('weight-result').textContent = (latest.estimated_weight || '0') + ' kg';
                         document.getElementById('timer-result').textContent = formatDuration(latest.session_duration || 0);
-                        document.getElementById('submission-time').textContent = new Date(latest.analysis_date || latest.timestamp).toLocaleString();
+                        document.getElementById('submission-time').textContent = utcDate(latest.analysis_date || latest.timestamp, latest).toLocaleString();
 
                         document.querySelector('.results-container').style.display = 'block';
                         document.getElementById('no-data').style.display = 'none';
@@ -298,7 +309,7 @@
                         document.getElementById('total-reps-result').textContent = latest.total_reps || '0';
                         document.getElementById('weight-result').textContent = (latest.estimated_weight || '0') + ' kg';
                         document.getElementById('timer-result').textContent = formatDuration(latest.session_duration || 0);
-                        document.getElementById('submission-time').textContent = new Date(latest.analysis_date || latest.timestamp).toLocaleString();
+                        document.getElementById('submission-time').textContent = utcDate(latest.analysis_date || latest.timestamp, latest).toLocaleString();
                         document.querySelector('.results-container').style.display = 'block';
                         document.getElementById('no-data').style.display = 'none';
                         renderCharts(data);
@@ -321,8 +332,8 @@
             }
 
             const sortedData = data.sort((a, b) => {
-                const dateA = new Date(a.analysis_date || a.timestamp || 0);
-                const dateB = new Date(b.analysis_date || b.timestamp || 0);
+                const dateA = utcDate(a.analysis_date || a.timestamp || 0, a);
+                const dateB = utcDate(b.analysis_date || b.timestamp || 0, b);
                 return dateA - dateB;
             });
 

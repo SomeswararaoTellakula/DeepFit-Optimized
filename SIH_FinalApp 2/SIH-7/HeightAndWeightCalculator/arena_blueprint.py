@@ -376,7 +376,7 @@ def arena_save():
         "camera": "simulated" if d.get("simulated") else "camera",
         "scope": arena_score.scope(raw),
         "raw": raw, "raw_hash": hashlib.sha256(json.dumps(raw, sort_keys=True, default=str).encode()).hexdigest(),
-        "profile": prof,
+        "profile": prof, "score_v": arena_score.SCORE_VERSION,
         "points": arena_score.points(raw), "points_total": arena_score.points(raw)["total"],
         "coach": {k: coach.get(k) for k in ("story", "strengths", "focus", "tip_for_parents", "source", "model") if k in coach},
         "next_plan": _clamp_plan((coach.get("next_session") if coach else None) or d.get("plan_used")),
@@ -464,11 +464,11 @@ def arena_result(rid, tok):
     problems = []
     if hashlib.sha256(json.dumps(doc.get("raw") or {}, sort_keys=True, default=str).encode()).hexdigest() != doc.get("raw_hash"):
         problems.append("The raw game measurements were changed after saving.")
-    if arena_score.profile(doc.get("raw"))["traits"] != doc["profile"]["traits"]:
+    if arena_score.profile(doc.get("raw"), doc.get("score_v", 1))["traits"] != doc["profile"]["traits"]:
         problems.append("The scores no longer match the measurements.")
     if doc.get("points") is not None and arena_score.points(doc.get("raw"))["total"] != doc["points"].get("total"):
         problems.append("The game points no longer match the measurements.")
-    if not hmac.compare_digest(passport.sign(_payload(doc)), doc.get("sig", "")):
+    if not any(hmac.compare_digest(passport.sign(_payload(doc), k), doc.get("sig", "")) for k in passport._accepted_secrets()):
         problems.append("Signature check failed - the result was edited.")
     from exercise_blueprint import _checked_at, _qr_svg_inline, share_base
     share_url = share_base() + f"/arena/r/{rid}/{tok}"

@@ -20,11 +20,11 @@ through the blind flow (session['blind_user_id']).
 import math
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import cv2
-from flask import Blueprint, Response, abort, jsonify, render_template, request, session
+from flask import Blueprint, Response, abort, jsonify, redirect, render_template, request, session
 
 import benchmarks
 import exercise_engine as EE          # first: registers the Coachability + Growth tests
@@ -52,6 +52,55 @@ RECOMMENDED = ["height_weight", "growth_measures", "partial_curlup", "pushups", 
                "dash_50m", "run_600m"]
 PUSHUP_VARIANTS = ("pushups", "pushups_modified")
 HOME_TESTS = ("height_weight", "situps", "vertical_jump", "dumbbell_curls")   # started from the home page buttons
+# The four home-page tests keep their original DeepFit screens (in standard mode); the shared engine runs them.
+# After Submit they go straight to the cumulative results. Blind / deaf modes use the accessible /ex/<key> page.
+CLASSIC = {"height_weight": ("height.html", "/height"), "situps": ("index_situp.html", "/situp/"),
+           "dumbbell_curls": ("index_dumbbell.html", "/dumbbell_ui"), "vertical_jump": ("index_verticaljump.html", "/vertical_jump_ui")}
+RESULTS_URL = "/dashboard"
+# After Submit each of the four goes to its own original result page
+RESULT_PAGES = {"situps": "/displaysitup", "dumbbell_curls": "/displaydumbbell", "vertical_jump": "/displayVerticalJump",
+                "height_weight": "/performance_dashboard"}
+
+# Times are stored in UTC and SHOWN in India time (IST has no daylight saving, so a fixed +5:30 is exact).
+IST = timezone(timedelta(hours=5, minutes=30), "IST")
+
+
+def to_ist(v) -> Optional[datetime]:
+    """A stored time (datetime, '2026-10-27T15:27:41Z', ISO without zone, or '20261027_152741') in IST. Stored = UTC."""
+    if v is None or v == "":
+        return None
+    try:
+        if isinstance(v, datetime):
+            d = v
+        else:
+            t = str(v).strip()
+            if len(t) == 15 and t[8] == "_":
+                d = datetime.strptime(t, "%Y%m%d_%H%M%S")
+            else:
+                d = datetime.fromisoformat(t.replace("Z", "+00:00").replace(" ", "T"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(IST)
+    except (TypeError, ValueError):
+        return None
+
+
+@exercise_bp.app_template_filter("ist")
+def _ist_filter(v, fmt="%d %b %Y, %I:%M %p IST"):
+    d = to_ist(v)
+    return d.strftime(fmt) if d else (v or "")
+
+
+def ist_date(v) -> str:
+    d = to_ist(v)
+    return d.strftime("%Y-%m-%d") if d else str(v or "")[:10]
+
+
+def test_url(key: str, mode: str = "standard") -> str:
+    """Where a test is taken: the classic screen for the four home tests in standard mode, else the shared page."""
+    if mode == "standard" and key in CLASSIC:
+        return CLASSIC[key][1]
+    return f"/ex/{key}?mode={mode}"
 
 
 def test_keys(ath: Optional[Dict] = None, latest: Optional[Dict] = None) -> List[str]:
@@ -118,7 +167,7 @@ def _height_for(ath: Dict) -> float:
             try:
                 d = db[coll].find_one({"user_email": ath["email"]}, sort=[("timestamp", -1)])
                 v = d and (d.get("final_height_cm") or d.get("height_cm"))
-                if v and 120 <= float(v) <= 220:
+                if v and 70 <= float(v) <= 230:          # children too (a 110 cm child is not 165 cm)
                     return float(v)
             except Exception:
                 pass
@@ -262,7 +311,7 @@ def _next_test(ath: Dict, mode: str, just_done: Optional[str] = None) -> Optiona
         if k in done:
             continue
         cls = EE.EXERCISES[k]
-        return {"key": k, "name": cls.name, "url": f"/ex/{k}?mode={mode}"}
+        return {"key": k, "name": cls.name, "url": test_url(k, mode)}
     return None
 
 
@@ -356,21 +405,26 @@ def legacy_record(doc: Dict):
     if key == "situps":
         return "situps", {**base, "reps_completed": int(doc["value"]), "form_quality": doc.get("form_score"), "created_at": now}
     if key == "vertical_jump":
-        return "Vertical_Jump", {**base, "max_height": float(doc["value"]), "total_jumps": int(doc.get("repetitions") or 0),
-                                 "session_start": now.isoformat()}
+        return "Vertical_Jump", {**base, "max_height": float(doc["value"]), "total_jumps": len(doc.get("attempts") or []) or int(doc.get("repetitions") or 0),
+                                 "session_start": now.isoformat(timespec="seconds") + "Z"}
     return "DumbBell", {**base, "total_reps": int(doc["value"]), "estimated_weight": doc.get("load_kg"),
                         "timestamp": now.strftime("%Y%m%d_%H%M%S"), "exercise_type": "dumbbell_curls",
-                        "analysis_date": now.isoformat()}
+                        "analysis_date": now.isoformat(timespec="seconds") + "Z"}
 
 
 def height_record(doc: Dict) -> Dict:
     """Same fields the old height page wrote, so the dashboard, reports and qualification keep working."""
     m = doc.get("measurement") or {}
+    est = bool(doc.get("estimate") or m.get("estimate"))          # no wall sheets: estimated from the body
+    ws = doc.get("weight_source")
     return {"user_email": doc.get("user_email"), "final_height_cm": doc.get("height_cm"),
             "final_weight_kg": doc.get("weight_kg"), "bmi": doc.get("bmi"), "bmi_category": doc.get("bmi_category"),
-            "height_uncertainty": f"±{max(0.5, m.get('spread_cm') or 0.5):.1f} cm",
-            "weight_uncertainty": "as the scale" if doc.get("weight_source") == "scale_photo" else "typed",
-            "confidence_level": "camera, about ±1 cm", "total_instances": m.get("samples"),
+            "height_uncertainty": (f"±{m.get('uncertainty_cm') or 8} cm (estimate)" if est
+                                   else f"±{max(0.5, m.get('spread_cm') or 0.5):.1f} cm"),
+            "weight_uncertainty": ("typical weight for this height (estimate)" if ws == "estimate"
+                                   else "as the scale" if ws == "scale_photo" else "typed"),
+            "confidence_level": (f"estimate from body proportions, about ±{m.get('uncertainty_cm') or 8} cm" if est
+                                 else "camera, about ±1 cm"), "total_instances": m.get("samples"),
             "method": f"camera + {m.get('reference') or 'reference'}; weight {doc.get('weight_source') or 'not given'}",
             "exercise_result_id": str(doc.get("_id", "")), "timestamp": datetime.utcnow()}
 
@@ -381,7 +435,8 @@ def load_benchmark(ex, res: Dict, ath: Dict, population: str) -> Optional[Dict]:
     if ex.key == "height_weight":
         if not res.get("height_cm"):
             return {"available": False}
-        return {"available": True, "unit": "cm", "rating": res.get("bmi_category") or ("Measured" if res.get("bmi") else "Height only"),
+        return {"available": True, "unit": "cm",
+                "rating": res.get("bmi_category") or ("Estimated" if res.get("estimate") else "Measured" if res.get("bmi") else "Height only"),
                 "bmi": res.get("bmi"), "note": res.get("bmi_note") or "Add your weight to get the BMI."}
     if not isinstance(ex, EE.DumbbellCurls) or not res.get("load_kg"):
         return None
@@ -409,7 +464,7 @@ def tests_hub():
     latest = _latest_by_exercise(ath) if ath else {}
     for k in test_keys(ath, latest):
         info = EE.EXERCISES[k].info()
-        info["url"] = f"/ex/{k}?mode={mode}"
+        info["url"] = test_url(k, mode)
         info["available"] = True
         if k == "height_weight":
             info["metric"] = "bmi"
@@ -418,7 +473,7 @@ def tests_hub():
         if last:
             info["last"] = {"value": last.get("value"), "unit": last.get("unit"),
                             "rating": (last.get("benchmark") or {}).get("rating"),
-                            "when": str(last.get("timestamp", ""))[:10]}
+                            "when": ist_date(last.get("timestamp"))}
         cards.append(info)
     done = sum(1 for c in cards if c.get("last"))
     hp = None
@@ -437,6 +492,8 @@ def exercise_page(key):
         abort(404)
     ath = current_athlete()
     mode = _mode()
+    if mode == "standard" and key in CLASSIC and request.args.get("page") != "shared":
+        return redirect(CLASSIC[key][1])
     info = cls.info()
     target = None
     if ath:
@@ -449,6 +506,20 @@ def exercise_page(key):
                            height_cm=_height_for(ath) if ath else 165,
                            verify_url=(ath or {}).get("verify_url", "/api/verify_user_identity"),
                            require_face=REQUIRE_FACE_CHECK)
+
+
+def classic_page(key: str):
+    """The original DeepFit screen for one of the four home tests, run by the shared engine (see static/js/classic_test.js)."""
+    cls = EE.EXERCISES.get(key)
+    if cls is None or key not in CLASSIC:
+        abort(404)
+    ath = current_athlete()
+    if ath is None:
+        return redirect(f"/login?next={CLASSIC[key][1]}")
+    info = cls.info()
+    ctx = {"key": key, "name": info["name"], "duration": cls.duration, "requireFace": bool(REQUIRE_FACE_CHECK),
+           "verifyUrl": ath.get("verify_url", "/api/verify_user_identity"), "resultsUrl": RESULT_PAGES.get(key, RESULTS_URL)}
+    return render_template(CLASSIC[key][0], user=ath, ex=info, classic=ctx)
 
 
 # ------------------------------------------------------------------ API
@@ -510,7 +581,7 @@ def start(key):
             wd = data.get("weight_detail") if isinstance(data.get("weight_detail"), dict) else None
             ACTIVE.ex.configure(weight_kg=data.get("weight_kg"), weight_source=data.get("weight_source"),
                                 weight_detail={k: wd.get(k) for k in ("reading", "unit", "model", "confidence")} if wd else None,
-                                age=ath.get("age"))
+                                age=ath.get("age"), sex=ath.get("gender"))
         if key == "growth_measures":
             def num(name, lo, hi):
                 try:
@@ -648,6 +719,31 @@ def stop(key):
         return jsonify({"status": "success", "result": None})
     result = _finish()
     return jsonify({"status": "success", "result": result})
+
+
+@exercise_bp.route("/ex/<key>/capture", methods=["POST"])
+def capture(key):
+    """Height & Weight: 'capture' (said aloud, or the S key) - measure now with what the camera has seen so far."""
+    ex = ACTIVE.ex
+    if ACTIVE.key != key or ex is None or not hasattr(ex, "capture"):
+        return jsonify({"ok": False, "message": "Start the measurement first"}), 400
+    if not ACTIVE.recording:
+        return jsonify({"ok": bool(ACTIVE.result), "result": ACTIVE.result})
+    problem = ex.capture()
+    if problem:
+        return jsonify({"ok": False, "message": problem})
+    return jsonify({"ok": True})          # the video stream sees 'finished' on its next frame and saves the result
+
+
+@exercise_bp.route("/ex/<key>/abort", methods=["POST"])
+def abort_test(key):
+    """Reset: end the running test WITHOUT saving it (the stream sees the new token and stops)."""
+    with ACTIVE.lock:
+        if ACTIVE.key == key and ACTIVE.result is None:
+            ACTIVE.token += 1
+            _release()
+            ACTIVE.clear()
+    return ("", 204)
 
 
 @exercise_bp.route("/ex/<key>/manual", methods=["POST"])
@@ -890,9 +986,8 @@ def validation_page():
 
 
 def _checked_at() -> str:
-    """When the signature was re-checked (server's local time), shown to whoever scanned the QR."""
-    now = datetime.now().astimezone()
-    return now.strftime("%d %b %Y, %H:%M:%S ") + (now.tzname() or "")
+    """When the signature was re-checked (India time), shown to whoever scanned the QR."""
+    return datetime.now(timezone.utc).astimezone(IST).strftime("%d %b %Y, %I:%M:%S %p IST")
 
 
 def _qr_svg_inline(url: str) -> Optional[str]:
@@ -1008,7 +1103,7 @@ def _athlete_view(atok: str) -> Dict:
         latest[d["exercise_type"]] = d
         ok, _ = passport.verify(d, None if d.get("coach_timed") else _result_by_token(str(d["_id"]), d["passport"]["token"])[1])
         out["rows"].append({"name": d.get("exercise_name"), "value": d.get("value"), "unit": d.get("unit"),
-                            "rating": (d.get("benchmark") or {}).get("rating"), "when": str(d.get("timestamp", ""))[:10],
+                            "rating": (d.get("benchmark") or {}).get("rating"), "when": ist_date(d.get("timestamp")),
                             "valid": ok, "url": f"/passport/r/{d['_id']}/{d['passport']['token']}",
                             "coach_timed": d.get("coach_timed")})
     first = docs[0]

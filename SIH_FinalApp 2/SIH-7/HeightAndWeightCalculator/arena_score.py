@@ -62,7 +62,13 @@ def _num(v, lo: float, hi: float) -> Optional[float]:
     return f if lo <= f <= hi else None
 
 
-def score_dodge(trials: List[Dict]):
+# Scoring versions: 1 = agility speed scale /4 (until Oct 2026), 2 = /8 (speeds read from new camera frames only).
+# Saved results keep the version they were scored with, so their verification re-scores them the same way.
+SCORE_VERSION = 2
+AGILITY_SCALE = {1: 4.0, 2: 8.0}
+
+
+def score_dodge(trials: List[Dict], version: int = SCORE_VERSION):
     trials = [t for t in (trials or []) if isinstance(t, dict)][:30]
     if len(trials) < 3:
         return None, None, {}
@@ -74,7 +80,7 @@ def score_dodge(trials: List[Dict]):
     reflex = round(100 * _clamp01((900 - median(rts)) / 650), 1) if rts else None
     # peak sideways speed in shoulder widths a second, read only from new camera frames: a quick sidestep is about
     # 4-6, a very fast one 8+ (a repeated frame used to inflate it, so the old /4 scale gave nearly everyone full marks)
-    agility = round(100 * (0.5 * success + 0.5 * _clamp01((median(peaks) if peaks else 0) / 8.0)), 1)
+    agility = round(100 * (0.5 * success + 0.5 * _clamp01((median(peaks) if peaks else 0) / AGILITY_SCALE.get(version, 8.0))), 1)
     return reflex, agility, {"trials": len(trials), "dodged": len(ok), "median_reaction_ms": round(median(rts)) if rts else None,
                              "median_peak_speed_sw_s": round(median(peaks), 2) if peaks else None}
 
@@ -247,9 +253,9 @@ def _max_streak_sum(n: int, per: float) -> float:
     return sum(per * _mult(i) for i in range(n))
 
 
-def profile(raw: Dict) -> Dict:
+def profile(raw: Dict, version: int = SCORE_VERSION) -> Dict:
     raw = raw if isinstance(raw, dict) else {}
-    reflex, agility, d_dodge = score_dodge(raw.get("dodge"))
+    reflex, agility, d_dodge = score_dodge(raw.get("dodge"), version)
     power, d_jump = score_jump(raw.get("jump"))
     anticipation, d_bowl = score_bowler(raw.get("bowler"))
     learning, d_combo = score_combo(raw.get("combo"))
