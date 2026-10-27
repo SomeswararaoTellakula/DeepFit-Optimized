@@ -270,6 +270,14 @@
 
                     document.querySelector('.results-container').style.display = 'block';
                     document.getElementById('no-data').style.display = 'none';
+                    try {                                     // the charts come from the saved sessions
+                        const hist = await (await fetch('/api/dumbbell_data')).json();
+                        if (hist && hist.length) {
+                            renderCharts(hist);
+                            if (hist[0].analysis_date || hist[0].timestamp)
+                                document.getElementById('submission-time').textContent = utcDate(hist[0].analysis_date || hist[0].timestamp, hist[0]).toLocaleString();
+                        }
+                    } catch (e) { console.error('Could not load the session history for the charts', e); }
                 } else {
                     // Fetch data from MongoDB API
                     const response = await fetch('/api/dumbbell_data');

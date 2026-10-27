@@ -781,6 +781,7 @@ class DumbbellCurls(Exercise):
             r["load_check"] = self.load_check
         if self.load_detect is not None:
             r["load_detect"] = self.load_detect
+        r["arm_counts"] = dict(self.counts)       # left / right reps, for the result page
         return r
 
 
@@ -920,6 +921,33 @@ class VerticalJump(_JumpBase):
     blind_adaptation = ["Spoken 'ready - jump' after calibration", "Clap or beep marks the start of each attempt"]
     deaf_adaptation = ["Caption shows 'Ready - jump!' after calibration; green flash with the height after each jump"]
 
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.jump_form: List[dict] = []   # per jump: deepest knee bend and trunk lean in the dip before take-off
+        self._crouch = None
+
+    def _track_crouch(self, pose):
+        """Knee angles (hip-knee-ankle) and trunk lean (shoulder-hip line from vertical) at the lowest point of the
+        dip before take-off - measured from the pose; a knee the camera can't see stays empty."""
+        knees = {}
+        for side, (h, k, a) in (("left", (L_HIP, L_KNEE, L_ANKLE)), ("right", (R_HIP, R_KNEE, R_ANKLE))):
+            if pose.vis(h, k, a):
+                knees[side] = angle(pose.p(h), pose.p(k), pose.p(a))
+        if not knees:
+            return
+        sh = self._avg_visible(pose, L_SHOULDER, R_SHOULDER)
+        hp = self._avg_visible(pose, L_HIP, R_HIP)
+        lean = math.degrees(math.atan2(abs(sh[0] - hp[0]), abs(hp[1] - sh[1]) + 1e-6)) if sh and hp else None
+        bend = min(knees.values())
+        if self._crouch is None or bend < self._crouch["bend"]:
+            self._crouch = {"bend": bend, "knee_left": knees.get("left"), "knee_right": knees.get("right"), "body_angle": lean}
+
+    def result(self):
+        r = super().result()
+        r["jump_form"] = [{k: (round(float(v), 1) if v is not None else None) for k, v in f.items() if k != "bend"}
+                          for f in self.jump_form]
+        return r
+
     def process(self, pose, t):
         cur = self._standing(pose)
         if cur is None:
@@ -927,10 +955,12 @@ class VerticalJump(_JumpBase):
             return
         if self.base is None:
             self._calibrate(cur)
+            self._crouch = None
             return
         rise = (self.base["hip_y"] - cur["hip_y"]) * self.base["cm_per_px"]
         self.rise_now = max(0.0, rise)                # for the screen only
         if not self.airborne:
+            self._track_crouch(pose)
             self._up_n = self._up_n + 1 if rise > 6 else 0
             self._flight = (self._flight + [(t, rise)])[-2:]
             if self._up_n >= 2:                   # two frames in a row: a real take-off, not one bad frame
@@ -951,6 +981,7 @@ class VerticalJump(_JumpBase):
                         return
                     self.attempts.append(self.peak_rise)
                     self.count = len(self.attempts)
+                    self.jump_form.append(dict(getattr(self, "_crouch", None) or {}))
                     self.feedback = f"Jump {len(self.attempts)}: {self.peak_rise:.0f} cm"
                     self.event("rep", f"{self.peak_rise:.0f} centimetres")
                     if len(self.attempts) >= self.ATTEMPTS:

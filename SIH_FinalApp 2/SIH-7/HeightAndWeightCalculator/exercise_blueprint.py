@@ -405,9 +405,19 @@ def legacy_record(doc: Dict):
     if key == "situps":
         return "situps", {**base, "reps_completed": int(doc["value"]), "form_quality": doc.get("form_score"), "created_at": now}
     if key == "vertical_jump":
-        return "Vertical_Jump", {**base, "max_height": float(doc["value"]), "total_jumps": len(doc.get("attempts") or []) or int(doc.get("repetitions") or 0),
+        att = [float(a) for a in (doc.get("attempts") or [])]
+        form = doc.get("jump_form") or []
+        jumps = []
+        for i, h in enumerate(att):
+            f = form[i] if i < len(form) else {}
+            jumps.append({"jump_number": i + 1, "height_cm": h, "body_angle": f.get("body_angle"),
+                          "knee_angles": {"left": f.get("knee_left"), "right": f.get("knee_right")}})
+        return "Vertical_Jump", {**base, "jumps": jumps, "max_height": float(doc["value"]), "total_jumps": len(att) or int(doc.get("repetitions") or 0),
+                                 "average_height": round(sum(att) / len(att), 1) if att else float(doc["value"]), "jump_heights": att,
                                  "session_start": now.isoformat(timespec="seconds") + "Z"}
-    return "DumbBell", {**base, "total_reps": int(doc["value"]), "estimated_weight": doc.get("load_kg"),
+    arms = doc.get("arm_counts") or {}
+    return "DumbBell", {**base, "total_reps": int(doc["value"]), "estimated_weight": doc.get("load_kg") or 0,
+                        "left_reps": int(arms.get("left") or 0), "right_reps": int(arms.get("right") or 0), "session_duration": secs,
                         "timestamp": now.strftime("%Y%m%d_%H%M%S"), "exercise_type": "dumbbell_curls",
                         "analysis_date": now.isoformat(timespec="seconds") + "Z"}
 
