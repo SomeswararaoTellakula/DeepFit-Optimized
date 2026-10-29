@@ -619,7 +619,7 @@ def start(key):
                 log_error(f"Body tracking could not start: {e}")
                 return jsonify({"status": "error", "message": "Body tracking could not start (the first run downloads a "
                                                               f"small model and needs internet): {e}"})
-            ACTIVE.monitor.reset(ath["verify_key"], ath.get("photo"))
+            ACTIVE.monitor.reset(ath["verify_key"], ath.get("photo"), side_view=(cls.camera == "side"))
         ACTIVE.recording = True
         ACTIVE.started = time.time()
     log_info(f"Test started: {key} mode={mode} athlete={ath['ref']}")

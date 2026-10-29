@@ -49,6 +49,35 @@ MIN_REGISTRATION_FACE = 60
 FACE_HIDDEN_SECONDS = float(os.environ.get("DEEPFIT_FACE_HIDDEN_SECONDS", "15"))
 # Large images are shrunk before detection; faces stay plenty big and it is much faster
 MAX_DETECT_SIDE = 640
+# During an exercise a "mismatch" only counts as a strike when the face is clear enough to judge
+# (big enough, facing the camera, not tilted) AND the similarity is clearly low. A side-on or lying
+# face (sit-ups, jumps) gives a low score even for the right person - that is "unclear", not a mismatch.
+STRIKE_THRESHOLD = float(os.environ.get("DEEPFIT_FACE_STRIKE", "0.30"))
+MIN_LIVE_FACE = int(os.environ.get("DEEPFIT_MIN_LIVE_FACE", "56"))
+
+
+def face_quality(row) -> Tuple[bool, str]:
+    """Is this YuNet face good enough to say 'this is NOT the athlete'?  row = x,y,w,h, r-eye, l-eye, nose, ..."""
+    import math
+    w, h = float(row[2]), float(row[3])
+    if min(w, h) < MIN_LIVE_FACE:
+        return False, "small"
+    rx, ry, lx, ly, nx, ny = (float(v) for v in row[4:10])
+    eye = math.hypot(lx - rx, ly - ry)
+    if eye < 0.25 * w:
+        return False, "side_on"                     # profile view: the eyes almost overlap
+    roll = abs(math.degrees(math.atan2(ly - ry, lx - rx)))
+    roll = min(roll, 180 - roll)
+    if roll > 30:
+        return False, "tilted"                      # lying down or head on one side
+    # yaw: nose position between the eyes (0 = centred)
+    ex, ey = (lx - rx) / eye, (ly - ry) / eye
+    t = ((nx - (rx + lx) / 2) * ex + (ny - (ry + ly) / 2) * ey) / eye
+    if abs(t) > 0.35:
+        return False, "turned"
+    if len(row) > 14 and float(row[14]) < 0.8:
+        return False, "blurry"
+    return True, "ok"
 
 
 def decode_base64_image(data: str) -> Optional[np.ndarray]:
@@ -222,7 +251,9 @@ class IdentityGuard:
             # doing the exercise. The registered athlete standing in the background
             # while someone else exercises must NOT count as a match.
             best = self._score(ref, self._embed(frame, faces[0]))
+            usable, why = face_quality(faces[0])
         info["similarity"] = round(best, 4)
+        info["usable"], info["quality"] = usable, why
         info["ms"] = int((time.time() - t0) * 1000)
 
         if len(faces) > 1 and require_single_face:
@@ -326,8 +357,9 @@ class LiveIdentityMonitor:
         self.max_strikes = max_strikes
         self.reset(None, None)
 
-    def reset(self, ref_key: Optional[str], photo_b64: Optional[str]) -> None:
+    def reset(self, ref_key: Optional[str], photo_b64: Optional[str], side_view: bool = False) -> None:
         self.ref_key = ref_key
+        self.side_view = side_view   # side-on / lying tests: face is often in profile or hidden
         self.photo_b64 = photo_b64
         self.strikes = 0
         self.terminated = False
@@ -354,13 +386,29 @@ class LiveIdentityMonitor:
         self._busy = True
         threading.Thread(target=self._run, args=(frame.copy(),), daemon=True).start()
 
+    def _check(self, frame: np.ndarray):
+        g = IdentityGuard.get()
+        ok, score, info = g.verify_frame(self.ref_key, self.photo_b64, frame, require_single_face=False)
+        if ok or not self.side_view:
+            return ok, score, info
+        # side-on tests: the athlete may be lying down (sit-ups) - look for an upright face in the turned image too
+        for rot in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE):
+            ok2, s2, i2 = g.verify_frame(self.ref_key, self.photo_b64, cv2.rotate(frame, rot), require_single_face=False)
+            if ok2 or (i2.get("usable") and not info.get("usable")):
+                ok, score, info = ok2, s2, i2
+            if ok:
+                break
+        return ok, score, info
+
     def _run(self, frame: np.ndarray) -> None:
         try:
-            ok, score, info = IdentityGuard.get().verify_frame(
-                self.ref_key, self.photo_b64, frame, require_single_face=False)
+            ok, score, info = self._check(frame)
             self.last_score = score
             reason = info.get("reason")
-            if reason in ("match", "mismatch"):
+            if reason == "mismatch" and (not info.get("usable", True) or score >= STRIKE_THRESHOLD):
+                # face too side-on / small / tilted to judge, or a borderline score: not proof of another person
+                reason = "unclear_face"
+            if reason in ("match", "mismatch"):         # only checks that could judge the face
                 self.checks += 1
                 self.best_score = max(self.best_score, float(score))
             if ok:
@@ -375,7 +423,10 @@ class LiveIdentityMonitor:
                 self.last_status = "mismatch"
                 self._last_face_seen = now
                 logger.warning("Identity mismatch %d/%d (score %.3f)", self.strikes, self.max_strikes, score)
-            elif reason == "no_face" and FACE_HIDDEN_SECONDS > 0 and now - self._last_face_seen > FACE_HIDDEN_SECONDS:
+            elif reason == "unclear_face":
+                self.last_status = "unclear_face"
+            elif (reason == "no_face" and not self.side_view and FACE_HIDDEN_SECONDS > 0
+                  and now - self._last_face_seen > FACE_HIDDEN_SECONDS):
                 # A short head turn during a rep is fine; a face hidden for a long time is not
                 self.strikes += 1
                 self.last_status = "face_hidden"
@@ -400,6 +451,7 @@ class LiveIdentityMonitor:
             "verified": "ID verified",
             "mismatch": f"ID MISMATCH ({self.strikes}/{self.max_strikes})",
             "no_face": "Face not visible",
+            "unclear_face": "ID: face side-on",
             "face_hidden": f"FACE HIDDEN ({self.strikes}/{self.max_strikes})",
             "pending": "Checking ID...",
         }.get(self.last_status, "Checking ID...")
