@@ -119,6 +119,7 @@
         el.submit.style.display = 'inline-block';
         el.reset.style.display = 'inline-block';
     }
+    let feedHandle = null;
     async function open() {
         if (!verified || running) return;
         el.open.style.display = 'none';
@@ -128,7 +129,7 @@
         let res;
         try {
             res = await (await fetch(`/ex/${KEY}/start`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'standard' }),
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'standard', source: (window.DeepFitCam ? DeepFitCam.source() : 'auto') }),
             })).json();
         } catch (e) { res = { message: 'Could not reach the server' }; }
         if (!res || res.status !== 'success') {
@@ -140,7 +141,8 @@
             return;
         }
         running = true; result = null; wantSubmit = false; lastFeedback = '';
-        el.feed.src = `/ex/${KEY}/video_feed?t=${Date.now()}`;
+        feedHandle = window.DeepFitCam ? await DeepFitCam.attach(KEY, el.feed, res, (m) => notify(m, 'error'))
+                                       : (el.feed.src = `/ex/${KEY}/video_feed?t=${Date.now()}`, null);
         el.feed.style.display = 'block';
         el.placeholder.style.display = 'none';
         el.stats.style.display = 'flex';
@@ -184,7 +186,8 @@
         running = false;
         clearInterval(pollTimer); pollTimer = null;
         stopListening();
-        el.feed.src = ''; el.feed.style.display = 'none';
+        if (feedHandle) { feedHandle.stop(); feedHandle = null; } else el.feed.src = '';
+        el.feed.style.display = 'none';
         el.badge.style.display = 'none'; el.line.style.display = 'none';
         el.capture.style.display = 'none';
     }

@@ -36,7 +36,7 @@
             timerBar: $('timer-progress'), status: $('session-status'), feedback: $('feedback'),
         };
         let verified = !CFG.requireFace, running = false, pollTimer = null, previewing = false, result = null;
-        let popupShown = false, lastEvent = 0;
+        let popupShown = false, lastEvent = 0, feedHandle = null;
 
         // ------------------------------------------------------------ helpers
         function fmt(sec) {
@@ -160,7 +160,7 @@
             let res;
             try {
                 res = await (await fetch(`/ex/${KEY}/start`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'standard' }),
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'standard', source: (window.DeepFitCam ? DeepFitCam.source() : 'auto') }),
                 })).json();
             } catch (e) { res = { message: 'Could not reach the server' }; }
             if (!res || res.status !== 'success') {
@@ -177,7 +177,8 @@
             running = true; result = null; popupShown = false; lastEvent = 0;
             page.reset();
             setTimer(DUR);
-            el.feed.src = `/ex/${KEY}/video_feed?t=${Date.now()}`;
+            feedHandle = window.DeepFitCam ? await DeepFitCam.attach(KEY, el.feed, res, (m) => { status(m); alert(m); })
+                                           : (el.feed.src = `/ex/${KEY}/video_feed?t=${Date.now()}`, null);
             el.feed.style.display = 'block'; el.placeholder.style.display = 'none';
             el.stop.disabled = false;
             status('Get ready...');
@@ -217,7 +218,8 @@
         function endRun() {
             running = false;
             clearInterval(pollTimer); pollTimer = null;
-            el.feed.src = ''; el.feed.style.display = 'none'; el.placeholder.style.display = 'flex';
+            if (feedHandle) { feedHandle.stop(); feedHandle = null; } else el.feed.src = '';
+            el.feed.style.display = 'none'; el.placeholder.style.display = 'flex';
             el.stop.disabled = true; el.start.disabled = !verified;
         }
         async function stop() {

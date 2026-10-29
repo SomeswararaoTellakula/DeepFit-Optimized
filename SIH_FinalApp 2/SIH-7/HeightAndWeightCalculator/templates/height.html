@@ -386,6 +386,7 @@
     <script src="{{ url_for('static', filename='js/notification-system.js') }}"></script>
     {% include 'partials/verify_view.html' %}
     <script>window.CLASSIC = {{ (classic or {})|tojson }};</script>
-    <script src="{{ url_for('static', filename='js/classic_height.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='js/browser_cam.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='js/classic_height.js', v='2') }}"></script>
 </body>
 </html>

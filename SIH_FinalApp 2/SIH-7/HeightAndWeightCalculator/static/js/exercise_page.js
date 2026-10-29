@@ -227,7 +227,7 @@
         if (!verified) { say('Please verify your identity first. Press V.', true); return; }
         if (running) return;
         el.start.disabled = true;
-        const body = { mode, height_cm: el.height ? Number(el.height.value) : null };
+        const body = { mode, height_cm: el.height ? Number(el.height.value) : null, source: (window.DeepFitCam ? DeepFitCam.source() : 'auto') };
         if (EX.key === 'growth_measures') {
             body.height_cm = Number($('in-height').value); body.weight_kg = Number($('in-weight').value);
             body.chair_cm = Number($('in-chair').value);
@@ -269,7 +269,8 @@
             return;
         }
         if (window.VerifyView && VerifyView.isVisible()) VerifyView.hide();
-        el.feed.src = `/ex/${EX.key}/video_feed?t=${Date.now()}`;
+        feedHandle = window.DeepFitCam ? await DeepFitCam.attach(EX.key, el.feed, res, (m) => { el.status.textContent = m; say(m, true); caption(m); })
+                                       : (el.feed.src = `/ex/${EX.key}/video_feed?t=${Date.now()}`, null);
         el.feed.style.display = 'block';
         el.placeholder.style.display = 'none';
         el.status.textContent = 'Get ready…';
@@ -277,6 +278,7 @@
         pollTimer = setInterval(poll, mode === 'blind' ? 200 : 400);
     }
 
+    let feedHandle = null;
     async function stop() {
         if (!running) return;
         if (EX.camera === 'none') {
@@ -300,7 +302,8 @@
     function endRun() {
         running = false;
         clearInterval(pollTimer); pollTimer = null;
-        el.feed.src = ''; el.feed.style.display = 'none';
+        if (feedHandle) { feedHandle.stop(); feedHandle = null; } else el.feed.src = '';
+        el.feed.style.display = 'none';
         el.placeholder.style.display = 'flex';
         el.stop.disabled = true; el.start.disabled = !verified;
         showCountdown(0);

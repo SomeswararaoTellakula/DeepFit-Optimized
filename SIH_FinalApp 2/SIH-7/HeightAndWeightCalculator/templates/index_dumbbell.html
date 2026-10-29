@@ -207,7 +207,8 @@
 
     {% include 'partials/verify_view.html' %}
     <script>window.CLASSIC = {{ (classic or {})|tojson }};</script>
-    <script src="{{ url_for('static', filename='js/classic_test.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='js/browser_cam.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='js/classic_test.js', v='2') }}"></script>
     <style>
         .video-container-large { position: relative; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.3); }
         .video-container-large #video-feed { border-radius: 12px; }

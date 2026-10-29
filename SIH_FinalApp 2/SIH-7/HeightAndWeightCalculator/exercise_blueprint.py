@@ -18,12 +18,14 @@ through the blind flow (session['blind_user_id']).
 """
 
 import math
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import cv2
+import numpy as np
 from flask import Blueprint, Response, abort, jsonify, redirect, render_template, request, session
 
 import benchmarks
@@ -605,12 +607,20 @@ def start(key):
             ACTIVE.ex.configure(height_cm=h, weight_kg=w, chair_cm=c, age=ath.get("age"), sex=ath.get("gender"))
         vs = session.get("identity_verified") or {}
         ACTIVE.precheck_score = vs.get("score")
+        source = "server"
         if cls.camera != "none":
             big = key in ("broad_jump", "height_weight")
-            ACTIVE.camera = open_camera(1280 if big else 640, 720 if big else 480)
-            if not ACTIVE.camera.isOpened():
-                _release()
-                return jsonify({"status": "error", "message": "Camera unavailable"})
+            want = (os.environ.get("DEEPFIT_CAMERA") or data.get("source") or "auto").lower()
+            cam = None if want == "browser" else open_camera(1280 if big else 640, 720 if big else 480)
+            if cam is None or not cam.isOpened():
+                # no webcam on this server (e.g. hosted on Render, or opened from a phone): the browser sends
+                # its own camera frames to /ex/<key>/frame and gets them back with the skeleton drawn
+                release_camera(cam)
+                if want == "server":
+                    _release()
+                    return jsonify({"status": "error", "message": "Camera unavailable"})
+                cam, source = BrowserCamera(), "browser"
+            ACTIVE.camera = cam
             try:       # works with old (mp.solutions) and new (Tasks API) MediaPipe - see pose_backend.py
                 ACTIVE.pose = pose_backend.PoseBackend(segmentation=getattr(cls, "needs_frames", False),
                                                        complexity=POSE_COMPLEXITY)
@@ -623,7 +633,8 @@ def start(key):
         ACTIVE.recording = True
         ACTIVE.started = time.time()
     log_info(f"Test started: {key} mode={mode} athlete={ath['ref']}")
-    return jsonify({"status": "success", "duration": cls.duration, "countdown": COUNTDOWN, "camera": cls.camera})
+    return jsonify({"status": "success", "duration": cls.duration, "countdown": COUNTDOWN, "camera": cls.camera,
+                    "source": source, "frame_size": [1280, 720] if key in ("broad_jump", "height_weight") else [640, 480]})
 
 
 def _draw(frame, ex: EE.Exercise, pose_landmarks):
@@ -646,6 +657,50 @@ def _draw(frame, ex: EE.Exercise, pose_landmarks):
     cv2.putText(frame, ex.feedback[:70], (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
 
+class BrowserCamera:
+    """Stands in for a webcam when the frames come from the athlete's browser (POST /ex/<key>/frame)."""
+
+    def isOpened(self):
+        return True
+
+    def read(self):
+        return False, None
+
+    def release(self):
+        pass
+
+
+def _step(frame) -> bool:
+    """One camera frame through the test: identity re-check, pose, engine, replay, drawing (in place).
+    Returns True when the test is over (finished, time up, or a different person)."""
+    ex = ACTIVE.ex
+    ACTIVE.monitor.submit(frame)
+    if ACTIVE.monitor.terminated:
+        ACTIVE.identity_stopped = True
+        ex.feedback = "Stopped - a different person was detected"
+        return True
+    now = time.time()
+    res, mask = None, None
+    if ACTIVE.pose is not None:
+        res, mask = ACTIVE.pose.process(frame, now)
+    if now - ACTIVE.started < COUNTDOWN:
+        ex.feedback = f"Get ready… {int(COUNTDOWN - (now - ACTIVE.started)) + 1}"
+    else:
+        pose = EE.Pose.from_mediapipe(res, frame.shape[1], frame.shape[0]) if res is not None else None
+        ex.update(pose, now)
+        if getattr(ex, "needs_frames", False):       # height: measured on the picture itself
+            ex.feed_frame(frame, res, mask, now)
+        if (isinstance(ex, EE.DumbbellCurls) and ex.load_kg and ex.load_check is None and pose is not None
+                and pose.vis(EE.L_WRIST, EE.R_WRIST, EE.L_ELBOW, EE.R_ELBOW)):
+            ex.load_check = {"method": "sam-3.1", "seen": None, "reason": "checking"}
+            threading.Thread(target=_check_dumbbell, args=(ex, frame.copy(), res), daemon=True).start()
+        ACTIVE.replay.add(now - ACTIVE.started - COUNTDOWN, ex.value(), res)
+    _draw(frame, ex, res)
+    ACTIVE.monitor.draw(frame)
+    rem = ACTIVE.remaining()
+    return bool(ex.finished or (rem is not None and rem <= 0))
+
+
 def _frames():
     token = ACTIVE.token
     throttle = FrameThrottle(24 if ACTIVE.key in ("vertical_jump", "broad_jump", "plate_tapping", "jumping_jacks") else 15)
@@ -655,35 +710,9 @@ def _frames():
             if not ok:
                 time.sleep(0.05)
                 continue
-            ex = ACTIVE.ex
-            ACTIVE.monitor.submit(frame)
-            if ACTIVE.monitor.terminated:
-                ACTIVE.identity_stopped = True
-                ex.feedback = "Stopped - a different person was detected"
-                break
-
-            now = time.time()
-            res, mask = None, None
-            if ACTIVE.pose is not None:
-                res, mask = ACTIVE.pose.process(frame, now)
-            if now - ACTIVE.started < COUNTDOWN:
-                ex.feedback = f"Get ready… {int(COUNTDOWN - (now - ACTIVE.started)) + 1}"
-            else:
-                pose = EE.Pose.from_mediapipe(res, frame.shape[1], frame.shape[0]) if res is not None else None
-                ex.update(pose, now)
-                if getattr(ex, "needs_frames", False):       # height: measured on the picture itself
-                    ex.feed_frame(frame, res, mask, now)
-                if (isinstance(ex, EE.DumbbellCurls) and ex.load_kg and ex.load_check is None and pose is not None
-                        and pose.vis(EE.L_WRIST, EE.R_WRIST, EE.L_ELBOW, EE.R_ELBOW)):
-                    ex.load_check = {"method": "sam-3.1", "seen": None, "reason": "checking"}
-                    threading.Thread(target=_check_dumbbell, args=(ex, frame.copy(), res), daemon=True).start()
-                ACTIVE.replay.add(now - ACTIVE.started - COUNTDOWN, ex.value(), res)
-            _draw(frame, ex, res)
-            ACTIVE.monitor.draw(frame)
+            done = _step(frame)
             yield mjpeg_chunk(encode_jpeg(frame))
-
-            rem = ACTIVE.remaining()
-            if ex.finished or (rem is not None and rem <= 0):
+            if done:
                 break
             throttle.wait()
     finally:
@@ -692,6 +721,37 @@ def _frames():
             _finish(token)
         except Exception as e:
             log_error(f"Finishing test failed: {e}")
+
+
+_frame_lock = threading.Lock()
+
+
+@exercise_bp.route("/ex/<key>/frame", methods=["POST"])
+def browser_frame(key):
+    """A camera frame from the athlete's browser (hosted server, or a phone on the LAN). Same processing as
+    the server webcam; answers with the frame and the skeleton drawn on it (JPEG), 204 when the test is over."""
+    if ACTIVE.key != key or not ACTIVE.recording or not isinstance(ACTIVE.camera, BrowserCamera):
+        return Response(status=204)
+    token = ACTIVE.token
+    buf = request.get_data(cache=False) or b""
+    if not buf and "frame" in request.files:
+        buf = request.files["frame"].read()
+    if len(buf) > 3 * 1024 * 1024:
+        return jsonify({"error": "frame too large"}), 413
+    frame = cv2.imdecode(np.frombuffer(buf, np.uint8), cv2.IMREAD_COLOR) if buf else None
+    if frame is None:
+        return jsonify({"error": "not a JPEG frame"}), 400
+    with _frame_lock:                       # one frame at a time through the engine
+        if token != ACTIVE.token or not ACTIVE.recording:
+            return Response(status=204)
+        done = _step(frame)
+        jpg = encode_jpeg(frame)
+    if done:
+        try:
+            _finish(token)
+        except Exception as e:
+            log_error(f"Finishing test failed: {e}")
+    return Response(jpg, mimetype="image/jpeg", headers={"X-Test-Done": "1" if done else "0", "Cache-Control": "no-store"})
 
 
 @exercise_bp.route("/ex/<key>/video_feed")
