@@ -25,7 +25,8 @@ const lowerMoves = ['squat', 'touch_knees', 'step_left', 'step_right', 'jump'];
 
 const tries = 5;
 const patternLen = 5;
-const stableFrames = 5; // a move must be held ~1/3 s (at 15 fps) to count
+const stableFrames = 2; // a move must be seen on at least 2 frames in a row ...
+const stableSeconds = 0.3; // ... and held about 1/3 s, whatever the frame rate (a jump: one clear frame)
 const lateGap = 2.5; // seconds between moves before a move counts as "late"
 const neutralToStart = 0.8; // seconds of standing neutral before each try
 const finishNeutral = 2.0; // standing neutral this long after moving ends the try early
@@ -239,6 +240,8 @@ class CoachScore {
 }
 
 /// 0-100. Mostly how much errors fall (learning), partly final accuracy.
+const notSeenNote = "The camera recognised almost none of the moves - stand 2.5-3 m away with your whole body in view, wait for 'Go', and hold each move for a moment.";
+
 CoachScore coachabilityScore(List<double> errors, int n) {
   if (errors.isEmpty) return const CoachScore(0.0, 0, null, 'no tries');
   final first = errors.first;
@@ -257,8 +260,10 @@ CoachScore coachabilityScore(List<double> errors, int n) {
   var sxx = sumOf(xs.map((x) => (x - mx) * (x - mx)));
   if (sxx == 0) sxx = 1;
   final slope = sumOf([for (var i = 0; i < xs.length; i++) (xs[i] - mx) * (errors[i] - my)]) / sxx;
+  // every try almost all wrong: most likely the camera did not see the moves, not a slow learner
+  final notSeen = errors.reduce(math.min) >= 0.8 * n;
   return CoachScore(pyRound(100 * (0.65 * reduction + 0.35 * accuracy), 1), pyRoundInt(100 * reduction),
-      pyRound(slope, 2), null);
+      pyRound(slope, 2), notSeen ? notSeenNote : null);
 }
 
 /// Percentile against a STARTER norm (mean 45, sd 20) until real data exists.
@@ -281,6 +286,7 @@ class CoachabilityChallenge extends Exercise {
   String curMove = 'unknown';
   String? _cand;
   int _candN = 0;
+  double _candT = 0.0;
   String? _lastAdded;
   final List<CoachBase> _calib = []; // deque(maxlen=15)
 
@@ -305,14 +311,16 @@ class CoachabilityChallenge extends Exercise {
   @override
   String get camera => 'front';
 
-  String? _stableMove(String mv) {
+  String? _stableMove(String mv, double t) {
     if (mv == _cand) {
       _candN += 1;
     } else {
       _cand = mv;
       _candN = 1;
+      _candT = t;
     }
-    return _candN >= stableFrames ? mv : null;
+    if (mv == 'jump') return mv; // in the air for only ~0.3 s: one frame with both feet clearly up is enough
+    return (_candN >= stableFrames && t - _candT >= stableSeconds) ? mv : null;
   }
 
   void _updateBase(BodyPose pose) {
@@ -357,6 +365,7 @@ class CoachabilityChallenge extends Exercise {
       finished = true;
       final sc = coachabilityScore(errorsPerTry, pattern.length);
       feedback = 'Finished! Coachability ${fmtFixed(sc.score, 0)}/100';
+      if (sc.note == notSeenNote) feedback = '$feedback. $notSeenNote';
       event('end', feedback);
     } else {
       phase = 'review';
@@ -370,12 +379,16 @@ class CoachabilityChallenge extends Exercise {
   @override
   void process(BodyPose pose, double t) {
     final mv = classify(pose, base);
-    final stable = _stableMove(mv);
+    final stable = _stableMove(mv, t);
     if (stable != null) curMove = stable;
 
     if (phase == 'preview') {
-      if (t >= previewUntil) _go(t);
-      return;
+      if (stable != null && stable != 'neutral' && stable != 'unknown') {
+        _go(t); // the athlete is ready and already moving: start the try now, keep this move
+      } else {
+        if (t >= previewUntil) _go(t);
+        return;
+      }
     }
 
     if (phase == 'ready' || phase == 'review') {

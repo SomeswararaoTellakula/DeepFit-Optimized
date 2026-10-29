@@ -182,8 +182,10 @@
                 render(s, pulse) {
                     const n = $('reps-count'), t = String(s.reps ?? 0);
                     if (n.textContent !== t) { n.textContent = t; pulse(n); }
-                    $('form-percentage').textContent = (s.form_percentage ?? 0) + '%';
-                    $('form-progress').style.width = (s.form_percentage ?? 0) + '%';
+                    // form quality = full sit-ups out of all attempts (half sit-ups lower it); blank until the first one
+                    const tried = (s.reps || 0) + (s.invalid_reps || 0);
+                    $('form-percentage').textContent = tried ? (s.form_percentage ?? 0) + '%' : '—';
+                    $('form-progress').style.width = (tried ? (s.form_percentage ?? 0) : 0) + '%';
                 },
             });
         })();

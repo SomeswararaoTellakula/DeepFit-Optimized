@@ -39,6 +39,13 @@ GROQ_BASE = os.environ.get("GROQ_API_BASE", "https://api.groq.com/openai/v1")
 GEMINI_BASE = os.environ.get("GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta/openai")
 GEMINI_LABEL = "DeepFit AI"                 # what the interface shows when Gemini answered
 SKIP_SECONDS = 900
+# Which providers may answer, in this order. Default: Meta only (Muse Spark on the Meta Model API).
+# To allow the fallbacks again: AI_PROVIDERS=meta,groq,gemini in .env
+PROVIDERS = [p.strip().lower() for p in os.environ.get("AI_PROVIDERS", "meta").split(",") if p.strip()]
+
+
+def enabled(provider: str) -> bool:
+    return provider in PROVIDERS
 
 LABELS = {
     "meta-models/muse-spark-open": "Muse Spark open weights (Groq)",
@@ -62,15 +69,15 @@ def _list(env: str, default: str) -> List[str]:
 
 
 def meta_key() -> Optional[str]:
-    return os.environ.get("MODEL_API_KEY") or os.environ.get("META_API_KEY")
+    return (os.environ.get("MODEL_API_KEY") or os.environ.get("META_API_KEY") or "").strip() or None
 
 
 def groq_key() -> Optional[str]:
-    return os.environ.get("GROQ_API_KEY")
+    return os.environ.get("GROQ_API_KEY") if enabled("groq") else None
 
 
 def gemini_key() -> Optional[str]:
-    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    return (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")) if enabled("gemini") else None
 
 
 def configured() -> bool:
@@ -80,10 +87,11 @@ def configured() -> bool:
 def routes(kind: str = "chat") -> List[Dict]:
     """Providers/models to try, in order. kind: chat | vision."""
     out = []
-    if meta_key():
+    if meta_key() and enabled("meta"):
         m = os.environ.get("META_MODEL", "muse-spark-1.3")
         out.append({"provider": "meta", "base": META_BASE, "key": meta_key(), "model": m, "label": "Muse Spark (Meta)",
-                    "reasoning": os.environ.get("META_REASONING_EFFORT", "low") or None, "system_role": "developer"})
+                    "reasoning": os.environ.get("META_REASONING_EFFORT", "low") or None,
+                    "system_role": os.environ.get("META_SYSTEM_ROLE", "system")})
     if groq_key():
         models = (_list("GROQ_VISION_MODELS", "meta-models/muse-spark-open,qwen/qwen3.8-27b") if kind == "vision"
                   else _list("GROQ_CHAT_MODELS", "meta-models/muse-spark-open,llama-3.3-70b-versatile"))
@@ -145,7 +153,7 @@ def complete(messages: List[Dict], *, tools: Optional[List[Dict]] = None, schema
             body["response_format"] = {"type": "json_object"}
         if r["reasoning"]:
             body["reasoning_effort"] = r["reasoning"]
-        for attempt in range(2):
+        for attempt in range(4):
             try:
                 resp = requests.post(f"{r['base']}/chat/completions", json=body, timeout=timeout,
                                      headers={"Authorization": f"Bearer {r['key']}", "Content-Type": "application/json"})
@@ -162,9 +170,22 @@ def complete(messages: List[Dict], *, tools: Optional[List[Dict]] = None, schema
                 last_label["vision" if vision else "chat"] = r["label"]
                 return {"message": msg, "label": r["label"], "provider": r["provider"]}
             text = resp.text[:300]
-            if resp.status_code == 400 and "reasoning" in text.lower() and "reasoning_effort" in body:
+            low = text.lower()
+            if resp.status_code == 400 and "reasoning" in low and "reasoning_effort" in body:
                 body.pop("reasoning_effort", None)          # this model takes no reasoning setting: retry once
                 r["reasoning"] = None
+                continue
+            if resp.status_code == 400 and "role" in low and not r.get("_role_tried"):
+                # the instructions' role name was refused: try the other common name (system <-> developer)
+                r["_role_tried"] = True
+                r["system_role"] = "developer" if r["system_role"] == "system" else "system"
+                body["messages"] = _adapt(body["messages"], r)
+                continue
+            if resp.status_code == 400 and ("response_format" in low or "json_schema" in low) \
+                    and body.get("response_format", {}).get("type") == "json_schema":
+                body["response_format"] = {"type": "json_object"}   # plain JSON mode; the schema stays in the prompt
+                body["messages"] = [{"role": r["system_role"], "content": "Answer with one JSON object that matches this "
+                                     "JSON schema: " + json.dumps(schema)}] + body["messages"]
                 continue
             if resp.status_code in (401, 402, 403, 404):
                 _skip[_rid(r)] = time.time() + SKIP_SECONDS
@@ -173,7 +194,8 @@ def complete(messages: List[Dict], *, tools: Optional[List[Dict]] = None, schema
             errors.append(f"{r.get('real', r['label'])}: HTTP {resp.status_code} {text}")
             break
     if not routes("vision" if vision else "chat"):
-        errors.append("no AI key set (MODEL_API_KEY, GROQ_API_KEY or GEMINI_API_KEY in .env)")
+        errors.append("no AI key set: put your Meta key in .env as MODEL_API_KEY=... and restart"
+                      if PROVIDERS == ["meta"] else "no AI key set (MODEL_API_KEY, GROQ_API_KEY or GEMINI_API_KEY in .env)")
     err = "; ".join(errors)
     _note(err)
     raise LLMError(err)

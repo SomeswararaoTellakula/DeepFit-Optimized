@@ -36,6 +36,7 @@ L_HEEL, R_HEEL = 29, 30
 L_FOOT, R_FOOT = 31, 32
 
 VIS = 0.5  # minimum landmark visibility
+BONE_RESET_FRAMES = 8  # this many 'stretched bone' frames in a row = the athlete moved nearer/further, not a glitch
 FOREARM_RATIO = 0.146      # forearm length / standing height (Drillis & Contini) - turns pixels into cm for curls
 MAX_SWING_PCT = 15         # curls: body swing allowed, % of shoulder width
 MAX_DRIFT_PCT = 25         # curls: elbow drifting up/forward allowed, % of upper-arm length
@@ -102,7 +103,7 @@ class Exercise:
     metric = "reps"                        # what result() reports
     unit = "reps"
     higher_is_better = True
-    duration = 60                          # seconds; None = ends by itself
+    duration = 180                         # seconds (3 min for every test); None = ends by itself
     camera = "side"                        # side | front | none
     setup: List[str] = []
     counting = ""
@@ -134,6 +135,7 @@ class Exercise:
         put in the wrong place for a frame (bones can't stretch). Such frames are skipped, not counted."""
         if not hasattr(self, "_bones"):
             self._bones: Dict = {}
+            self._bad_run = 0
         lens = [(a, b, pose.dist(a, b)) for a, b in pairs if pose.vis(a, b)]   # only points the model is sure of
         bad = False
         for a, b, L in lens:
@@ -142,6 +144,13 @@ class Exercise:
                 m = median(d)
                 if m > 0 and not (lo * m <= L <= hi * m):
                     bad = True
+        self._bad_run = self._bad_run + 1 if bad else 0
+        if bad and self._bad_run >= BONE_RESET_FRAMES:
+            # not a glitch: the athlete really moved nearer / further (walked from the laptop to the mat) -
+            # start learning the bone lengths again instead of rejecting every frame from now on
+            self._bones = {}
+            self._bad_run = 0
+            bad = False
         if not bad:
             for a, b, L in lens:
                 self._bones.setdefault((a, b), deque(maxlen=45)).append(L)
@@ -289,8 +298,9 @@ class RepState:
 
 class SitUps(Exercise):
     key, name, icon, category = "situps", "Sit-ups", "🏋️", "core"
-    duration = 60
+    duration = 180
     DOWN_ELEV, UP_ELEV = 20, 55   # torso angle above the floor, degrees
+    HALF_ELEV = 35                # rose past this but lay back down before 55 = a half sit-up (shown in form quality)
     setup = ["Lie on your back, knees bent, feet flat", "Hands crossed on chest or behind head",
              "Place the phone side-on, about 2 m away, whole body visible"]
     counting = "One rep = from lying (torso under 20° from the floor) to sitting up (over 55°) and back down."
@@ -316,8 +326,17 @@ class SitUps(Exercise):
         if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2])]):
             return
         elev = self.sm("elev", elevation(pose.p(side[1]), pose.p(side[0])), t)
+        if self.rs.stage == "down":
+            # a half sit-up: rose clearly off the floor but lay back down before sitting up -> not counted
+            if elev > self.HALF_ELEV:
+                self._half = True
+            elif elev < self.DOWN_ELEV and getattr(self, "_half", False):
+                self._half = False
+                self.invalid += 1
+                self.fault("half_situp", "Sit up all the way - chest up to your knees")
         st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None), t)
         if st == "up":
+            self._half = False
             self.feedback = "Good - now lie back down"
         elif st == "down":
             if self.rs.prev == "up":
@@ -335,7 +354,7 @@ def _ramp(x, lo, hi):
 
 class PartialCurlUp(Exercise):
     key, name, icon, category = "partial_curlup", "Partial Curl-up", "🔄", "core"
-    khelo_india, duration = True, 60
+    khelo_india, duration = True, 180
     DOWN_ELEV, UP_ELEV = 12, 25   # torso lift above the floor, degrees
     setup = ["Lie on your back, knees bent about 140°, feet flat", "Arms straight by your sides, palms down",
              "Phone side-on, about 2 m away, whole body visible"]
@@ -382,7 +401,7 @@ class PartialCurlUp(Exercise):
 
 class PushUps(Exercise):
     key, name, icon, category = "pushups", "Push-ups", "💪", "strength"
-    khelo_india, duration = True, 60
+    khelo_india, duration = True, 180
     DOWN, UP, STRAIGHT = 95, 150, 150   # elbow angle down/up, body line angle
     DOWN_RATIO, UP_RATIO = 0.76, 0.93   # shoulder-to-hand distance vs the straight-arm top (0.71 = elbows at 90°)
     knee_variant = False
@@ -636,6 +655,7 @@ class DumbbellCurls(Exercise):
     key, name, icon, category = "dumbbell_curls", "Dumbbell Curls", "🏋️‍♂️", "strength"
     camera = "front"
     UP, DOWN = 55, 150
+    HALF = 100                    # bent past this but lowered again before 55 = a half curl (shown in form quality)
     setup = ["Stand facing the camera, a dumbbell (or water bottle) in each hand", "Elbows close to your sides, whole upper body visible"]
     counting = "Each arm counts separately: curl until the elbow angle is under 55°, lower until it is over 150°."
     form_cues = ["Keep elbows pinned", "No swinging", "Control the way down"]
@@ -648,6 +668,7 @@ class DumbbellCurls(Exercise):
         super().__init__(**kw)
         self.state = {"left": "down", "right": "down"}
         self.counts = {"left": 0, "right": 0}
+        self._mid = {"left": False, "right": False}
         self._t_state = {"left": -1e9, "right": -1e9}
         self.arm_angle: Dict[str, Optional[float]] = {"left": None, "right": None}   # for the screen only
         # weight analysis (does not change counting, feedback or events - the phone app counts the same way)
@@ -687,7 +708,14 @@ class DumbbellCurls(Exercise):
             self._measure(arm, pose, (s, e, w), raw, t)     # ...the weight analysis keeps every raw detail
             if t - self._t_state[arm] < 0.2:           # a real curl can't flip faster than this
                 continue
+            if self.state[arm] == "down" and self.UP <= a < self.HALF:
+                self._mid[arm] = True                       # bending, but not up yet
+            elif self.state[arm] == "down" and a > self.DOWN and self._mid[arm]:
+                self._mid[arm] = False                      # lowered again without curling all the way: half rep
+                self.invalid += 1
+                self.fault("half_curl", f"{arm.title()} arm: curl all the way up")
             if self.state[arm] == "down" and a < self.UP:
+                self._mid[arm] = False
                 self._t_state[arm] = t
                 self.state[arm] = "up"
                 self.counts[arm] += 1
@@ -788,7 +816,7 @@ class DumbbellCurls(Exercise):
 class _JumpBase(Exercise):
     """Shared calibration: stand still, measure body size in pixels to convert to cm."""
     camera = "side"
-    duration = 90
+    duration = 180
     ATTEMPTS = 3
 
     G = 981.0                     # cm/s^2 - flight is ballistic, which lets us find the true top of the jump
@@ -825,7 +853,9 @@ class _JumpBase(Exercise):
         if head is None or hip is None or ank is None:
             return None
         lv, rv = pose.pts[L_ANKLE][2] >= VIS, pose.pts[R_ANKLE][2] >= VIS
-        return {"hip_y": hip[1], "ank_x": ank[0], "ank_y": ank[1], "body_px": ank[1] - head[1],
+        sh = self._avg_visible(pose, L_SHOULDER, R_SHOULDER)
+        torso = math.hypot(sh[0] - hip[0], sh[1] - hip[1]) if sh else 0.0
+        return {"hip_y": hip[1], "ank_x": ank[0], "ank_y": ank[1], "body_px": ank[1] - head[1], "torso_px": torso,
                 "l_ank_y": pose.p(L_ANKLE)[1] if lv else ank[1], "r_ank_y": pose.p(R_ANKLE)[1] if rv else ank[1],
                 "both_feet": lv and rv}
 
@@ -857,6 +887,20 @@ class _JumpBase(Exercise):
 
     def value(self):
         return max(self.attempts) if self.attempts else 0.0
+
+    MOVED_FRAMES = 8              # frames in a row looking bigger / smaller than at calibration
+
+    def _moved_away(self, cur) -> bool:
+        """The body looks more than 20% bigger or smaller than when it was calibrated, for several frames in a
+        row: the athlete walked nearer or further from the camera after calibrating (not a jump - a jump moves
+        the body up, it doesn't change its size)."""
+        b = self.base.get("torso_px") or 0          # the torso: same length in a crouch, unlike head-to-feet
+        far = b > 0 and cur["torso_px"] > 0 and abs(cur["torso_px"] / b - 1) > 0.2
+        self._moved_n = getattr(self, "_moved_n", 0) + 1 if far else 0
+        if self._moved_n >= self.MOVED_FRAMES:
+            self._moved_n = 0
+            return True
+        return False
 
     def _apex(self, samples) -> float:
         """Top of the flight from the hip samples: fit a ballistic curve (fixed gravity), so the peak is right
@@ -956,6 +1000,12 @@ class VerticalJump(_JumpBase):
         if self.base is None:
             self._calibrate(cur)
             self._crouch = None
+            return
+        if not self.airborne and self._moved_away(cur):
+            # calibrated while standing somewhere else (e.g. close to the laptop): calibrate again where they jump
+            self.base = None
+            self._crouch = None
+            self.feedback = "Stand still for calibration…"
             return
         rise = (self.base["hip_y"] - cur["hip_y"]) * self.base["cm_per_px"]
         self.rise_now = max(0.0, rise)                # for the screen only
@@ -1082,7 +1132,7 @@ class BroadJump(_JumpBase):
 class SitAndReach(Exercise):
     key, name, icon, category = "sit_and_reach", "Sit and Reach", "🙆", "flexibility"
     khelo_india = True
-    metric, unit, duration, higher_is_better = "reach", "cm", 45, True
+    metric, unit, duration, higher_is_better = "reach", "cm", 180, True
     STRAIGHT_LEG, HOLD = 150, 1.0
     setup = ["Sit on the floor, legs straight, feet against a box or wall, side-on to the camera",
              "Reach forward slowly with both hands together and hold the furthest point for 1 second"]

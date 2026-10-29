@@ -12,7 +12,9 @@ import 'py.dart';
 
 class SitUps extends Exercise {
   static const downElev = 20.0, upElev = 55.0; // torso angle above the floor, degrees
+  static const halfElev = 35.0; // rose past this but lay back down before 55 = a half sit-up
   final rs = RepState(2, 0.25);
+  bool _half = false;
 
   SitUps({super.heightCm}) {
     mirrorLabel = 'Tone rises as you sit up; highest when you are up';
@@ -38,8 +40,19 @@ class SitUps extends Exercise {
     }
     if (!bonesOk(pose, [[side[0], side[1]], [side[1], side[2]]])) return;
     final elev = sm('elev', elevation(pose.p(side[1]), pose.p(side[0])), t);
+    if (rs.stage == 'down') {
+      // a half sit-up: rose clearly off the floor but lay back down before sitting up -> not counted
+      if (elev > halfElev) {
+        _half = true;
+      } else if (elev < downElev && _half) {
+        _half = false;
+        invalid += 1;
+        fault('half_situp', 'Sit up all the way - chest up to your knees');
+      }
+    }
     final st = rs.see(elev < downElev ? 'down' : (elev > upElev ? 'up' : null), t);
     if (st == 'up') {
+      _half = false;
       feedback = 'Good - now lie back down';
     } else if (st == 'down') {
       if (rs.prev == 'up') {
@@ -401,6 +414,8 @@ class JumpingJacks extends Exercise {
 
 class DumbbellCurls extends Exercise {
   static const up = 55.0, down = 150.0;
+  static const half = 100.0; // bent past this but lowered again before 55 = a half curl
+  final Map<String, bool> _mid = {'left': false, 'right': false};
   final Map<String, String> state = {'left': 'down', 'right': 'down'};
   final Map<String, int> counts = {'left': 0, 'right': 0};
   final Map<String, double> _tState = {'left': -1e9, 'right': -1e9};
@@ -428,7 +443,15 @@ class DumbbellCurls extends Exercise {
       seen = true;
       final a = sm('a_$arm', angle(pose.p(s), pose.p(e), pose.p(w)), t);
       if (t - _tState[arm]! < 0.2) continue; // a real curl can't flip faster than this
+      if (state[arm] == 'down' && a >= up && a < half) {
+        _mid[arm] = true; // bending, but not up yet
+      } else if (state[arm] == 'down' && a > down && _mid[arm]!) {
+        _mid[arm] = false; // lowered again without curling all the way: half rep
+        invalid += 1;
+        fault('half_curl', '${arm[0].toUpperCase()}${arm.substring(1)} arm: curl all the way up');
+      }
       if (state[arm] == 'down' && a < up) {
+        _mid[arm] = false;
         _tState[arm] = t;
         state[arm] = 'up';
         counts[arm] = counts[arm]! + 1;
@@ -449,7 +472,9 @@ class DumbbellCurls extends Exercise {
 class _Stand {
   final double hipY, ankX, ankY, bodyPx, lAnkY, rAnkY;
   final bool bothFeet;
-  const _Stand(this.hipY, this.ankX, this.ankY, this.bodyPx, this.lAnkY, this.rAnkY, [this.bothFeet = true]);
+  final double torsoPx; // shoulder -> hip length: the same in a crouch, so it shows walking nearer / further
+  const _Stand(this.hipY, this.ankX, this.ankY, this.bodyPx, this.lAnkY, this.rAnkY,
+      [this.bothFeet = true, this.torsoPx = 0.0]);
 }
 
 class _JumpBaseline {
@@ -481,7 +506,7 @@ abstract class _JumpBase extends Exercise {
   _JumpBase({super.heightCm});
 
   @override
-  double? get duration => 90.0;
+  double? get duration => 180.0;
 
   static Vec? _avgVisible(BodyPose pose, int a, int b) {
     final pts = [for (final i in [a, b]) if (pose.pts[i][2] >= visMin) pose.pts[i]];
@@ -508,8 +533,26 @@ abstract class _JumpBase extends Exercise {
     final ank = _avgVisible(pose, L.lAnkle, L.rAnkle);
     if (head == null || hip == null || ank == null) return null;
     final lv = pose.pts[L.lAnkle][2] >= visMin, rv = pose.pts[L.rAnkle][2] >= visMin;
+    final sh = _avgVisible(pose, L.lShoulder, L.rShoulder);
+    final torso = sh == null ? 0.0 : math.sqrt((sh.x - hip.x) * (sh.x - hip.x) + (sh.y - hip.y) * (sh.y - hip.y));
     return _Stand(hip.y, ank.x, ank.y, ank.y - head.y, lv ? pose.p(L.lAnkle).y : ank.y,
-        rv ? pose.p(L.rAnkle).y : ank.y, lv && rv);
+        rv ? pose.p(L.rAnkle).y : ank.y, lv && rv, torso);
+  }
+
+  static const movedFrames = 8; // frames in a row looking bigger / smaller than at calibration
+  int _movedN = 0;
+
+  /// The torso looks more than 20% bigger or smaller than when calibrated, for several frames in a row:
+  /// the athlete walked nearer or further from the camera after calibrating (a jump doesn't change its size).
+  bool _movedAway(_Stand cur) {
+    final b = base!.avg.torsoPx;
+    final far = b > 0 && cur.torsoPx > 0 && (cur.torsoPx / b - 1).abs() > 0.2;
+    _movedN = far ? _movedN + 1 : 0;
+    if (_movedN >= movedFrames) {
+      _movedN = 0;
+      return true;
+    }
+    return false;
   }
 
   static double _sd(List<double> vals) {
@@ -534,7 +577,7 @@ abstract class _JumpBase extends Exercise {
     }
     double med(double Function(_Stand) f) => medianOf(calib.map(f));
     final a = _Stand(med((c) => c.hipY), med((c) => c.ankX), med((c) => c.ankY), med((c) => c.bodyPx),
-        med((c) => c.lAnkY), med((c) => c.rAnkY));
+        med((c) => c.lAnkY), med((c) => c.rAnkY), true, med((c) => c.torsoPx));
     // nose is ~0.92 of standing height; ankle ~0.04 above the floor
     base = _JumpBaseline(a, (heightCm * 0.88) / math.max(a.bodyPx, 1.0));
     calib.clear();
@@ -618,6 +661,12 @@ class VerticalJump extends _JumpBase {
     }
     if (base == null) {
       _calibrate(cur);
+      return;
+    }
+    if (!airborne && _movedAway(cur)) {
+      // calibrated while standing somewhere else (e.g. close to the phone): calibrate again where they jump
+      base = null;
+      feedback = 'Stand still for calibration…';
       return;
     }
     final rise = (base!.avg.hipY - cur.hipY) * base!.cmPerPx;
@@ -795,7 +844,7 @@ class SitAndReach extends Exercise {
   @override
   String get unit => 'cm';
   @override
-  double? get duration => 45.0;
+  double? get duration => 180.0;
 
   @override
   double? mirror(BodyPose pose, double t) {
@@ -861,6 +910,8 @@ class SitAndReach extends Exercise {
 }
 
 class FlamingoBalance extends Exercise {
+  @override
+  double? get duration => 60.0; // standard flamingo test: falls in 60 s
   static const lift = 0.06, downTime = 0.3;
   double balanceTime = 0.0;
   bool balancing = false;
@@ -957,6 +1008,8 @@ class PlateTarget {
 }
 
 class PlateTapping extends Exercise {
+  @override
+  double? get duration => 60.0; // the test itself: 25 cycles, timed
   static const cycles = 25;
   Map<String, PlateTarget>? targets;
   String nextSide = 'left';

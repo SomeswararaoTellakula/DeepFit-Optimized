@@ -458,13 +458,10 @@
         // Function to format date
         function formatDate(dateString) {
             const date = new Date(dateString);
-            return date.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
+            return date.toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata', year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            }) + ' IST';
         }
 
         // Function to animate numbers
@@ -516,35 +513,41 @@
                     document.getElementById('weight-uncertainty').textContent =
                         (typeof wu === 'number') ? `Uncertainty: ±${wu.toFixed(1)} kg` : (wu ? `Uncertainty: ${wu}` : '');
 
-                    // Calculate and display BMI
-                    const height_m = (result.final_height_cm || result.height_cm) / 100;
-                    const bmi = (result.final_weight_kg || result.weight_kg) / (height_m * height_m);
-                    animateNumber(document.getElementById('bmi-value'), bmi);
-                    
-                    const bmiInfo = getBMIStatus(bmi);
-                    const bmiStatusElement = document.getElementById('bmi-status');
-                    bmiStatusElement.textContent = bmiInfo.status;
-                    bmiStatusElement.className = `bmi-status ${bmiInfo.class}`;
+                    // BMI only from a real weight: a camera-only "typical weight" would just give back a typical BMI
+                    const $id = (id) => document.getElementById(id) || { textContent: '', style: {}, className: '' };
+                    const hcm = result.final_height_cm || result.height_cm, wkg = result.final_weight_kg || result.weight_kg;
+                    const weightIsGuess = /estimate/i.test(String(result.weight_uncertainty || ''));
+                    let bmi = (typeof result.bmi === 'number') ? result.bmi : null;
+                    if (bmi === null && !weightIsGuess && hcm && wkg) bmi = wkg / Math.pow(hcm / 100, 2);
+                    const bmiStatusElement = $id('bmi-status');
+                    if (bmi !== null) {
+                        animateNumber($id('bmi-value'), bmi);
+                        const bmiInfo = getBMIStatus(bmi);
+                        bmiStatusElement.textContent = bmiInfo.status;
+                        bmiStatusElement.className = `bmi-status ${bmiInfo.class}`;
+                    } else {
+                        $id('bmi-value').textContent = '—';
+                        bmiStatusElement.textContent = 'Needs your real weight (scale)';
+                        bmiStatusElement.className = 'bmi-status';
+                    }
 
-                    // Display confidence
                     // only a confidence the measurement really reported - never a default
                     if (typeof result.confidence_score === 'number') {
                         const confidence = result.confidence_score * 100;
-                        animateNumber(document.getElementById('confidence-value'), confidence, '%');
-                        setTimeout(() => {
-                            document.getElementById('confidence-fill').style.width = confidence + '%';
-                        }, 500);
+                        animateNumber($id('confidence-value'), confidence, '%');
+                        setTimeout(() => { $id('confidence-fill').style.width = confidence + '%'; }, 500);
                     } else {
-                        document.getElementById('confidence-value').textContent = result.confidence_level || '—';
+                        $id('confidence-value').textContent = result.confidence_level || '—';
                     }
 
-                    // Display statistics
-                    document.getElementById('total-measurements').textContent = result.total_instances || 1;
-                    document.getElementById('measurement-date').textContent = 
-                        formatDate(result.timestamp || new Date().toISOString());
-                    document.getElementById('calibration-quality').textContent =
-                        result.calibration_quality ? result.calibration_quality.toFixed(2) + 'px' : '—';
-                    document.getElementById('processing-time').textContent =
+                    // Statistics
+                    $id('total-measurements').textContent = result.total_instances || 1;
+                    $id('measurement-date').textContent = result.timestamp ? formatDate(result.timestamp) : '—';
+                    $id('calibration-quality').textContent = (typeof result.calibration_quality === 'number')
+                        ? result.calibration_quality.toFixed(2) + 'px'
+                        : (/estimate/i.test(String(result.confidence_level || '')) ? 'Body estimate (±8 cm)'
+                           : (result.confidence_level ? 'Wall sheets (±1 cm)' : '—'));
+                    $id('processing-time').textContent =
                         result.processing_time_ms ? Math.round(result.processing_time_ms) : '—';
 
                     // Add pulse animation to cards

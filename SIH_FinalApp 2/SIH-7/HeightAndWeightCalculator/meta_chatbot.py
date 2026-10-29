@@ -199,17 +199,22 @@ class MetaChatbot:
         import llm
         e = err.lower()
         if "no ai key" in e:
-            return ("The AI Coach has no API key yet. Add MODEL_API_KEY (Meta), GROQ_API_KEY or GEMINI_API_KEY "
-                    "to the .env file (or the host's environment settings) and restart.")
+            return ("The AI Coach has no API key yet. Put your Meta Model API key in the .env file as MODEL_API_KEY=... "
+                    "(or in the host's environment settings) and restart.")
         if (llm.groq_key() or llm.gemini_key()) and ("groq" in e or "gemini" in e):
             return "The AI Coach is busy right now - all AI services are unavailable for a moment. Please try again in a minute."
         if "401" in e or "unauthorized" in e or "invalid api key" in e:
             return "The AI Coach isn't configured correctly (API key rejected). Please check MODEL_API_KEY."
         if "402" in e or "billing" in e:
-            return ("The AI Coach is set up, but the Meta Model API account has no billing / credits yet. "
-                    "Add credits in the Meta developer console - or add GROQ_API_KEY to .env to use the free fallback.")
+            return ("The AI Coach is set up, but the Meta Model API account has no billing / credits for this key. "
+                    "Check the credits and the key's project in the Meta developer console.")
         if "403" in e:
             return "The AI Coach doesn't have access to this model. Please check the Meta Model API account."
+        if "404" in e:
+            return ("The Meta Model API doesn't know this model name. Check META_MODEL in .env "
+                    "(for example META_MODEL=muse-spark-1.3) and restart.")
+        if "http 400" in e:
+            return "The Meta Model API refused the request: " + err.split("HTTP 400", 1)[-1].strip()[:160]
         if "429" in e:
             return "The AI Coach is getting a lot of requests right now. Please try again in a few seconds."
         if "could not reach" in e:

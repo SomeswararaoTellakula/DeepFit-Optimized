@@ -974,7 +974,7 @@ def get_latest_measurement():
         try:
             final_estimate = db['Final_Estimated_Height_and_Weight'].find_one(
                 {'user_email': user_email},
-                sort=[('timestamp', -1)]
+                sort=[('_id', -1)]   # newest saved first (old records stored times in mixed formats)
             )
         except Exception as db_error:
             print(f"Error accessing Final_Estimated_Height_and_Weight: {db_error}")
@@ -1004,7 +1004,7 @@ def get_latest_measurement():
         try:
             latest_measurement = db['Height and Weight'].find_one(
                 {'user_email': user_email},
-                sort=[('timestamp', -1)]
+                sort=[('_id', -1)]   # newest saved first (old records stored times in mixed formats)
             )
         except Exception as db_error:
             print(f"Error accessing Height and Weight collection: {db_error}")
@@ -1362,7 +1362,7 @@ def get_situp_data():
         if mongodb_connected:
             situps_collection = db['situps']
             # only the signed-in athlete's results (the cumulative dashboard and qualification use these)
-            data = list(situps_collection.find(_own_results()).sort('submission_time', -1).limit(20))
+            data = list(situps_collection.find(_own_results()).sort('_id', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:
@@ -1422,7 +1422,7 @@ def get_dumbbell_data():
     try:
         if mongodb_connected:
             dumbbell_collection = db['DumbBell']
-            data = list(dumbbell_collection.find(_own_results()).sort('analysis_date', -1).limit(20))
+            data = list(dumbbell_collection.find(_own_results()).sort('_id', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:
@@ -1536,7 +1536,7 @@ def get_vertical_jump_data():
         if mongodb_connected:
             # Use the correct collection name from MongoDB
             jump_collection = db['Vertical_Jump']
-            data = list(jump_collection.find(_own_results()).sort('session_start', -1).limit(20))
+            data = list(jump_collection.find(_own_results()).sort('_id', -1).limit(20))
             
             # Convert ObjectId to string for JSON serialization
             for item in data:

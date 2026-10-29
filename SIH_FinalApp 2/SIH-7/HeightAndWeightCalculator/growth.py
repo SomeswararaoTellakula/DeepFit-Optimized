@@ -28,7 +28,7 @@ HOLD = 1.5                 # seconds to hold each position still
 class GrowthMeasures(Exercise):
     key, name, icon, category = "growth_measures", "Growth Measures (sitting height)", "📐", "growth"
     metric, unit, higher_is_better = "maturity_offset", "yrs", True
-    duration = 120
+    duration = 180
     camera = "side"
     age_groups = "8-17"
     setup = ["Enter your standing height and weight (measured with a tape and a scale) and the chair height",

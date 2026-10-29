@@ -17,7 +17,7 @@ abstract class Exercise {
   String get metric => 'reps';
   String get unit => 'reps';
   bool get higherIsBetter => true;
-  double? get duration => 60.0; // seconds; null = ends by itself / coach-timed
+  double? get duration => 180.0; // seconds (3 min for every test); null = ends by itself / coach-timed
   String get camera => 'side'; // side | front | none
 
   // --- live state
@@ -37,6 +37,8 @@ abstract class Exercise {
   final List<double> _mirrorHist = [];
   Smoother sm = Smoother(); // median filter for every signal a threshold is applied to
   final Map<String, List<double>> _bones = {};
+  int _badRun = 0;
+  static const boneResetFrames = 8; // this many 'stretched bone' frames in a row = moved nearer/further, not a glitch
 
   Exercise({double heightCm = 165.0}) : heightCm = heightCm == 0 ? 165.0 : heightCm;
 
@@ -56,6 +58,13 @@ abstract class Exercise {
         final m = medianOf(d);
         if (m > 0 && !(lo * m <= e.value && e.value <= hi * m)) bad = true;
       }
+    }
+    _badRun = bad ? _badRun + 1 : 0;
+    if (bad && _badRun >= boneResetFrames) {
+      // not a glitch: the athlete really moved nearer / further - learn the bone lengths again
+      _bones.clear();
+      _badRun = 0;
+      bad = false;
     }
     if (!bad) {
       for (final e in lens) {

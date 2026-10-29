@@ -39,7 +39,8 @@ LOWER = ["squat", "touch_knees", "step_left", "step_right", "jump"]
 
 TRIES = 5
 PATTERN_LEN = 5
-STABLE_FRAMES = 5          # a move must be held ~1/3 s (at 15 fps) to count
+STABLE_FRAMES = 2          # a move must be seen on at least 2 frames in a row ...
+STABLE_SECONDS = 0.3       # ... and held about 1/3 s, whatever the camera's frame rate (a jump: one clear frame)
 LATE_GAP = 2.5             # seconds between moves before a move counts as "late"
 NEUTRAL_TO_START = 0.8     # seconds of standing neutral before each try
 FINISH_NEUTRAL = 2.0       # standing neutral this long after moving ends the try early
@@ -196,6 +197,9 @@ def score_try(target: List[str], done: List[Tuple[str, float]], t_start: float) 
                      "move": (moves[di] if di is not None else None)} for o, ti, di in ops]}
 
 
+NOT_SEEN_NOTE = ("The camera recognised almost none of the moves - stand 2.5-3 m away with your whole body in view, wait for 'Go', and hold each move for a moment.")
+
+
 def coachability_score(errors: List[float], n: int) -> Dict:
     """0-100. Mostly how much errors fall (learning), partly final accuracy."""
     if not errors:
@@ -213,8 +217,12 @@ def coachability_score(errors: List[float], n: int) -> Dict:
     mx, my = sum(xs) / len(xs), sum(errors) / len(errors)
     sxx = sum((x - mx) ** 2 for x in xs) or 1
     slope = sum((x - mx) * (e - my) for x, e in zip(xs, errors)) / sxx
+    note = None
+    if min(errors) >= 0.8 * n:
+        # every try almost all wrong: most likely the camera did not see the moves, not a slow learner
+        note = NOT_SEEN_NOTE
     return {"score": round(100 * (0.65 * reduction + 0.35 * accuracy), 1),
-            "reduction_pct": round(100 * reduction), "slope": round(slope, 2)}
+            "reduction_pct": round(100 * reduction), "slope": round(slope, 2), "note": note}
 
 
 def starter_percentile(score: float, age=None) -> int:
@@ -254,19 +262,21 @@ class CoachabilityChallenge(Exercise):
         self.try_start = 0.0
         self.review_until = 0.0
         self.cur_move = "unknown"
-        self._cand, self._cand_n = None, 0
+        self._cand, self._cand_n, self._cand_t = None, 0, 0.0
         self._last_added = None
         self._calib: deque = deque(maxlen=15)
         self.feedback = "Stand still, arms down, facing the camera"
         self.mirror_label = ""
 
     # --- helpers
-    def _stable_move(self, mv: str) -> Optional[str]:
+    def _stable_move(self, mv: str, t: float = 0.0) -> Optional[str]:
         if mv == self._cand:
             self._cand_n += 1
         else:
-            self._cand, self._cand_n = mv, 1
-        return mv if self._cand_n >= STABLE_FRAMES else None
+            self._cand, self._cand_n, self._cand_t = mv, 1, t
+        if mv == "jump":        # in the air for only ~0.3 s: one frame with both feet clearly up is enough
+            return mv
+        return mv if self._cand_n >= STABLE_FRAMES and t - self._cand_t >= STABLE_SECONDS else None
 
     def _update_base(self, pose: Pose):
         if not pose.vis(L_HIP, R_HIP, L_ANKLE, R_ANKLE):
@@ -308,6 +318,8 @@ class CoachabilityChallenge(Exercise):
             self.finished = True
             sc = coachability_score([x["errors"] for x in self.tries], len(self.pattern))
             self.feedback = f"Finished! Coachability {sc['score']:.0f}/100"
+            if sc.get("note") == NOT_SEEN_NOTE:
+                self.feedback += ". " + NOT_SEEN_NOTE
             self.event("end", self.feedback)
         else:
             self.phase = "review"
@@ -317,14 +329,18 @@ class CoachabilityChallenge(Exercise):
     # --- main loop
     def process(self, pose, t):
         mv = classify(pose, self.base or {})
-        stable = self._stable_move(mv)
+        stable = self._stable_move(mv, t)
         if stable:
             self.cur_move = stable
 
         if self.phase == "preview":
-            if t >= self.preview_until:
+            if stable and stable not in ("neutral", "unknown"):
+                self._go(t)          # the athlete is ready and already moving: start the try now, keep this move
+            elif t >= self.preview_until:
                 self._go(t)
-            return
+                return
+            else:
+                return
 
         if self.phase in ("ready", "review"):
             if self.phase == "review" and t < self.review_until:

@@ -27,7 +27,8 @@ MODEL_DIR = os.path.join(HERE, "models")
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_{v}/float16/1/pose_landmarker_{v}.task"
 VARIANT = {0: "lite", 1: "full", 2: "heavy"}
 CONNECTIONS = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24), (23, 25), (25, 27),
-               (24, 26), (26, 28), (27, 29), (29, 31), (27, 31), (28, 30), (30, 32), (28, 32), (15, 19), (16, 20)]
+               (24, 26), (26, 28), (27, 29), (29, 31), (27, 31), (28, 30), (30, 32), (28, 32), (15, 19), (16, 20),
+               (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8), (9, 10)]
 _dl_lock = threading.Lock()
 
 
@@ -109,15 +110,16 @@ class PoseBackend:
             pass
 
 
-def draw(frame, landmarks, color=(245, 200, 66)) -> None:
-    """Skeleton overlay with plain OpenCV (no MediaPipe drawing helpers needed)."""
+def draw(frame, landmarks, color=(230, 60, 230)) -> None:
+    """Skeleton overlay with plain OpenCV: pink lines, blue dots (the original DeepFit look)."""
     if landmarks is None:
         return
     h, w = frame.shape[:2]
     pts = [(int(p.x * w), int(p.y * h), getattr(p, "visibility", 1.0)) for p in landmarks.landmark]
     for a, b in CONNECTIONS:
         if a < len(pts) and b < len(pts) and pts[a][2] > 0.5 and pts[b][2] > 0.5:
-            cv2.line(frame, pts[a][:2], pts[b][:2], color, 2, cv2.LINE_AA)
-    for x, y, v in pts[11:]:
+            cv2.line(frame, pts[a][:2], pts[b][:2], color, 3, cv2.LINE_AA)
+    for x, y, v in pts:
         if v > 0.5:
-            cv2.circle(frame, (x, y), 3, (255, 255, 255), -1, cv2.LINE_AA)
+            cv2.circle(frame, (x, y), 6, (255, 255, 255), -1, cv2.LINE_AA)
+            cv2.circle(frame, (x, y), 5, (240, 110, 70), -1, cv2.LINE_AA)

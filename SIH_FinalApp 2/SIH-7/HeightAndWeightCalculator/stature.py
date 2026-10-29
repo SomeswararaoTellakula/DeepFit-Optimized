@@ -572,7 +572,7 @@ class HeightWeight(Exercise):
     khelo_india = True
     age_groups = "5+"
     metric, unit, higher_is_better = "height", "cm", True
-    duration = 60
+    duration = 180
     camera = "front"
     needs_frames = True               # the server also passes the camera picture (for the wall reference)
     setup = ["Print the two DeepFit sheets (FLOOR and TOP) at 100 % - or use two plain A4 sheets (long side up) on a darker wall",

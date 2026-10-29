@@ -40,8 +40,6 @@ def provider_name(bot=None):
     chain = [r['label'] for r in llm.routes('chat')]
     if chain:
         return chain[0] + (' (+ fallback)' if len(chain) > 1 else '')
-    if os.environ.get("GEMINI_API_KEY"):
-        return "Gemini"
     return "not configured"
 
 
@@ -68,11 +66,11 @@ def get_chatbot(key):
         if llm.configured():
             from meta_chatbot import MetaChatbot
             chatbot_instances[key] = MetaChatbot()
-        elif os.environ.get("GEMINI_API_KEY"):
+        elif llm.enabled("gemini") and os.environ.get("GEMINI_API_KEY"):
             from gemini_chatbot import GeminiChatbot
             chatbot_instances[key] = GeminiChatbot(os.environ["GEMINI_API_KEY"])
         else:
-            raise RuntimeError("No AI provider configured. Set MODEL_API_KEY or GROQ_API_KEY in .env")
+            raise RuntimeError("No AI provider configured. Put your Meta key in .env as MODEL_API_KEY=... and restart")
     return chatbot_instances[key]
 
 

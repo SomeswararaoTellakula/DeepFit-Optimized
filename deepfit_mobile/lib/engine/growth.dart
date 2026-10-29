@@ -72,7 +72,7 @@ class GrowthMeasures extends Exercise {
   @override
   String get unit => 'yrs';
   @override
-  double? get duration => 120.0;
+  double? get duration => 180.0;
 
   void configure({double? heightCm, double? weightKg, double? chairCm, Object? age, Object? sex}) {
     if (heightCm != null) inputs['height_cm'] = heightCm;
