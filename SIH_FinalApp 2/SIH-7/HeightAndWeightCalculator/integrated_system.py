@@ -831,39 +831,212 @@ class IntegratedHeightWeightSystem:
             return np.ones((frame.shape[0], frame.shape[1]), dtype=np.float32) * 2.5
     
     def estimate_scale_factor(self, keypoints_2d: Dict, frame_shape: Tuple[int, int]) -> Tuple[float, float]:
-        """Estimate scale factor using anthropometric references"""
-        # Simplified implementation
-        return 0.1, 0.8
-    
-    def calculate_3d_keypoints_enhanced(self, keypoints_2d: Dict, depth_map: np.ndarray, scale_factor: float) -> Optional[np.ndarray]:
-        """Calculate enhanced 3D keypoints"""
-        # Simplified implementation
+        """Estimate pixels-to-cm scale using shoulder width as anthropometric reference."""
+        if 'holistic' not in keypoints_2d:
+            return 0.1, 0.0
+
+        landmarks = keypoints_2d['holistic']
+        height_px, width_px = frame_shape
+        scale_estimates, confidences = [], []
+
+        # --- shoulder width reference ---
+        ls, rs = landmarks[11], landmarks[12]
+        if ls[2] > 0.7 and rs[2] > 0.7:
+            sw_px = math.sqrt(((ls[0]-rs[0])*width_px)**2 + ((ls[1]-rs[1])*height_px)**2)
+            if sw_px > 10:
+                # estimate gender from shoulder/hip ratio
+                lh, rh = landmarks[23], landmarks[24]
+                ref_sw = 39.0  # average of male(41.2) and female(36.8)
+                if lh[2] > 0.6 and rh[2] > 0.6:
+                    hip_px = abs(lh[0]-rh[0])
+                    shr = abs(ls[0]-rs[0]) / (hip_px + 1e-6)
+                    ref_sw = 41.2 if shr > 1.05 else 36.8
+                scale_estimates.append(ref_sw / sw_px)
+                confidences.append(0.85)
+
+        # --- eye distance reference ---
+        le, re = landmarks[2], landmarks[5]
+        if le[2] > 0.8 and re[2] > 0.8:
+            ed_px = math.sqrt(((le[0]-re[0])*width_px)**2 + ((le[1]-re[1])*height_px)**2)
+            if ed_px > 5:
+                scale_estimates.append(6.25 / ed_px)   # avg interpupillary distance
+                confidences.append(0.75)
+
+        if not scale_estimates:
+            return 0.1, 0.0
+
+        w = np.array(confidences); w /= w.sum()
+        scale = float(np.average(scale_estimates, weights=w))
+        conf  = float(np.mean(confidences))
+        return (scale, conf) if 0.005 <= scale <= 2.0 else (0.1, 0.0)
+
+    def calculate_3d_keypoints_enhanced(self, keypoints_2d: Dict, depth_map: np.ndarray,
+                                        scale_factor: float) -> Optional[np.ndarray]:
+        """Project 2-D landmarks to metric 3-D using the scale factor."""
         if 'holistic' not in keypoints_2d:
             return None
-        return np.random.rand(33, 3) * 100  # Placeholder
-    
-    def estimate_height_enhanced(self, keypoints_3d: Optional[np.ndarray], keypoints_2d: Dict, scale_factor: float) -> Tuple[float, float]:
-        """Enhanced height estimation"""
-        # Simplified implementation
-        return 175.0 + np.random.normal(0, 5), 0.85
-    
-    def extract_anthropometric_features_enhanced(self, keypoints_3d: Optional[np.ndarray], height: float) -> np.ndarray:
-        """Extract enhanced anthropometric features"""
-        # Simplified implementation
-        return np.random.rand(20)
-    
-    def estimate_weight_enhanced(self, anthropometric_features: np.ndarray, height: float) -> Tuple[float, float]:
-        """Enhanced weight estimation"""
-        # Simplified implementation
-        bmi = 22.5 + np.random.normal(0, 2)
-        weight = bmi * (height / 100) ** 2
-        return weight, 0.8
-    
-    def calculate_confidence_enhanced(self, scale_confidence: float, height_confidence: float, weight_confidence: float, height: float, weight: float) -> float:
-        """Calculate enhanced confidence"""
-        base_confidence = (scale_confidence * 0.3 + height_confidence * 0.4 + weight_confidence * 0.3)
-        calib_factor = 1.0 if self.camera_calibration.is_calibrated else 0.6
-        return min(0.95, base_confidence * calib_factor)
+        landmarks = keypoints_2d['holistic']
+        h, w = depth_map.shape
+        pts = []
+        for lm in landmarks:
+            xn, yn, vis = lm
+            xp = int(np.clip(xn * w, 0, w-1))
+            yp = int(np.clip(yn * h, 0, h-1))
+            # metric X/Y in cm via scale; Z from depth map
+            x_cm = xn * w * scale_factor
+            y_cm = yn * h * scale_factor
+            z_cm = float(depth_map[yp, xp]) * 100.0
+            pts.append([x_cm, y_cm, z_cm])
+        return np.array(pts, dtype=np.float32)
+
+    def estimate_height_enhanced(self, keypoints_3d: Optional[np.ndarray],
+                                 keypoints_2d: Dict, scale_factor: float) -> Tuple[float, float]:
+        """Estimate height from head-to-ankle pixel span + scale factor."""
+        if 'holistic' not in keypoints_2d:
+            return 170.0, 0.1
+
+        landmarks = keypoints_2d['holistic']
+        estimates, confs = [], []
+
+        # --- Method 1: pixel span head→ankle with scale ---
+        head_ids  = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        ankle_ids = [27, 28]
+        foot_ids  = [29, 30, 31, 32]
+
+        vis_head  = [i for i in head_ids  if landmarks[i][2] > 0.6]
+        vis_ankle = [i for i in ankle_ids if landmarks[i][2] > 0.5]
+        vis_foot  = [i for i in foot_ids  if landmarks[i][2] > 0.4]
+        vis_low   = vis_ankle + vis_foot
+
+        if vis_head and vis_low and scale_factor > 0:
+            head_y  = min(landmarks[i][1] for i in vis_head)
+            low_y   = max(landmarks[i][1] for i in vis_low)
+            span_px = abs(low_y - head_y) * 720   # normalised → pixels (720p)
+            h_est   = span_px * scale_factor + 12  # +12 cm for top-of-head above nose
+            if 130 <= h_est <= 230:
+                estimates.append(h_est)
+                confs.append(0.80)
+
+        # --- Method 2: body-segment proportions ---
+        try:
+            ls, rs = landmarks[11], landmarks[12]
+            lh, rh = landmarks[23], landmarks[24]
+            lk, rk = landmarks[25], landmarks[26]
+            la, ra = landmarks[27], landmarks[28]
+            if all(lm[2] > 0.6 for lm in [ls, rs, lh, rh, lk, rk, la, ra]):
+                sh_y  = (ls[1] + rs[1]) / 2
+                hip_y = (lh[1] + rh[1]) / 2
+                kn_y  = (lk[1] + rk[1]) / 2
+                an_y  = (la[1] + ra[1]) / 2
+                torso = abs(hip_y - sh_y)
+                leg   = abs(an_y  - hip_y)
+                if torso > 0.01 and leg > 0.01:
+                    # torso ≈ 30 %, leg ≈ 53 % of height; head ≈ 13 % above shoulder
+                    h_from_torso = torso / 0.30
+                    h_from_leg   = leg   / 0.53
+                    h_est = (h_from_torso + h_from_leg) / 2 * 720 * scale_factor
+                    if 130 <= h_est <= 230:
+                        estimates.append(h_est)
+                        confs.append(0.75)
+        except Exception:
+            pass
+
+        if not estimates:
+            return 170.0, 0.1
+
+        w = np.array(confs); w /= w.sum()
+        height = float(np.average(estimates, weights=w))
+
+        # temporal smoothing
+        self.measurement_history.append(height)
+        if len(self.measurement_history) > 15:
+            self.measurement_history.pop(0)
+        if len(self.measurement_history) >= 5:
+            alpha = 0.25
+            s = self.measurement_history[0]
+            for v in self.measurement_history[1:]:
+                s = alpha * v + (1 - alpha) * s
+            height = s
+
+        return round(height, 1), float(np.mean(confs))
+
+    def extract_anthropometric_features_enhanced(self, keypoints_3d: Optional[np.ndarray],
+                                                 height: float) -> np.ndarray:
+        """Extract body-proportion features for weight estimation."""
+        features = np.zeros(8)
+        features[0] = height
+        if keypoints_3d is not None and len(keypoints_3d) > 28:
+            try:
+                ls = keypoints_3d[11]; rs = keypoints_3d[12]
+                lh = keypoints_3d[23]; rh = keypoints_3d[24]
+                lk = keypoints_3d[25]; rk = keypoints_3d[26]
+                la = keypoints_3d[27]; ra = keypoints_3d[28]
+                sw = np.linalg.norm(ls - rs)
+                hw = np.linalg.norm(lh - rh)
+                sc = (ls + rs) / 2; hc = (lh + rh) / 2
+                kc = (lk + rk) / 2; ac = (la + ra) / 2
+                torso = np.linalg.norm(sc - hc)
+                leg   = np.linalg.norm(hc - ac)
+                features[1] = sw
+                features[2] = hw
+                features[3] = torso
+                features[4] = leg
+                features[5] = sw / (hw + 1e-6)          # shoulder-hip ratio
+                features[6] = 1.0 if sw / (hw + 1e-6) > 1.05 else 0.0  # gender proxy
+                features[7] = sw * torso                 # upper-body area proxy
+            except Exception:
+                pass
+        return features
+
+    def estimate_weight_enhanced(self, features: np.ndarray, height: float) -> Tuple[float, float]:
+        """Estimate weight using ML model + BMI formula ensemble."""
+        estimates, confs = [], []
+
+        # ML model
+        try:
+            ml_feat = features[:8].reshape(1, -1)
+            ml_feat_s = self.weight_scaler.transform(ml_feat)
+            w_ml = float(self.weight_models['rf'].predict(ml_feat_s)[0])
+            if 35 <= w_ml <= 160:
+                estimates.append(w_ml); confs.append(0.80)
+        except Exception:
+            pass
+
+        # BMI-based formula
+        if height > 0:
+            shr = features[5] if features[5] > 0 else 0.95
+            base_bmi = 24.5 if shr > 1.05 else 22.5
+            w_bmi = base_bmi * (height / 100) ** 2
+            if 35 <= w_bmi <= 160:
+                estimates.append(w_bmi); confs.append(0.70)
+
+        # Robinson formula
+        if height > 0:
+            h_in = height / 2.54
+            is_male = features[6] if len(features) > 6 else 0.5
+            w_rob = (52 + 1.9 * (h_in - 60)) if is_male > 0.5 else (49 + 1.7 * (h_in - 60))
+            if 35 <= w_rob <= 160:
+                estimates.append(w_rob); confs.append(0.60)
+
+        if not estimates:
+            return max(35.0, min(160.0, 22.5 * (height/100)**2 if height > 0 else 70.0)), 0.3
+
+        w = np.array(confs); w /= w.sum()
+        weight = float(np.clip(np.average(estimates, weights=w), 35, 160))
+        return round(weight, 1), float(np.mean(confs))
+
+    def calculate_confidence_enhanced(self, scale_confidence: float, height_confidence: float,
+                                      weight_confidence: float, height: float, weight: float) -> float:
+        """Calculate overall confidence score."""
+        base = scale_confidence * 0.3 + height_confidence * 0.4 + weight_confidence * 0.3
+        calib = 1.0 if self.camera_calibration.is_calibrated else 0.7
+        h_ok  = 1.0 if 130 <= height <= 230 else 0.6
+        w_ok  = 1.0 if 35  <= weight <= 160 else 0.6
+        bmi_ok = 1.0
+        if height > 0:
+            bmi = weight / (height/100)**2
+            bmi_ok = 1.0 if 14 <= bmi <= 45 else 0.7
+        return float(np.clip(base * calib * h_ok * w_ok * bmi_ok, 0.1, 0.95))
     
     def check_measurement_stability_enhanced(self, current_result: MeasurementResult) -> MeasurementResult:
         """Enhanced measurement stability check with auto-save"""

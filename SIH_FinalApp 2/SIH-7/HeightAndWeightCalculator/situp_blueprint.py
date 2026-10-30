@@ -108,24 +108,33 @@ class SitupsCounter:
                 # Use average angle for better accuracy
                 angle = (left_angle + right_angle) / 2
                 
-                # Improved situp detection logic
-                if angle > 150:  # Lying down position
+                # DOWN threshold: >=140° means lying flat (more lenient to catch partial lying)
+                # UP threshold:   <=80° means fully sitting up (more lenient to catch partial crunch)
+                # stage is initialised to None; treat None same as "up" so first lie-down sets "down"
+                global exercise_stats
+                if angle >= 140:  # lying down / reset position
                     if self.stage != "down":
                         self.stage = "down"
                         self.feedback = "Go Up!"
-                elif angle < 100 and self.stage == "down":  # Sitting up position
-                    # Only increment if timer hasn't completed
-                    global exercise_stats
-                    if exercise_stats.get('remaining_time', 180) > 0:
+                elif angle <= 80:  # sitting up / crunch complete
+                    if self.stage == "down":
+                        if exercise_stats.get('remaining_time', 180) > 0:
+                            self.stage = "up"
+                            self.count += 1
+                            self.feedback = f"Rep {self.count}! Go Down"
+                        else:
+                            self.feedback = "Time's up! Stop exercising"
+                    elif self.stage is None:
+                        # started in up position – just mark stage so next down→up counts
                         self.stage = "up"
-                        self.count += 1
-                        self.feedback = f"Rep {self.count}! Go Down"
-                    else:
-                        self.feedback = "Time's up! Stop exercising"
-                elif self.stage == "down" and 100 <= angle <= 150:
+                        self.feedback = "Go Down first"
+                elif self.stage == "down":
                     self.feedback = "Keep Going Up!"
-                elif self.stage == "up" and 100 <= angle <= 150:
+                elif self.stage == "up":
                     self.feedback = "Go Down Slowly"
+                else:
+                    self.stage = "down"  # initialise on first partial detection
+                    self.feedback = "Go Up!"
                 
                 # Draw pose landmarks
                 self.mp_draw.draw_landmarks(

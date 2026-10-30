@@ -19,8 +19,8 @@ class SitupsDetector:
         self.last_angle = 0
         
         # Angle thresholds for situps
-        self.down_threshold = 160  # Lying down
-        self.up_threshold = 90     # Sitting up
+        self.down_threshold = 140  # Lying down (more lenient)
+        self.up_threshold = 80     # Sitting up (more lenient)
         
     def calculate_angle(self, a, b, c):
         """Calculate angle between three points"""
@@ -78,27 +78,27 @@ class SitupsDetector:
                 torso_angle = self.calculate_angle(left_shoulder, left_hip, left_knee)
                 self.last_angle = torso_angle
                 
-                # Improved situps counting logic with better thresholds
-                if torso_angle > 150:  # Lying down position (more lenient)
+                # Improved situps counting logic
+                if torso_angle >= self.down_threshold:  # Lying down
                     if self.stage != "down":
                         self.stage = "down"
                         self.form_feedback = "Go Up!"
-                        
-                elif torso_angle < 100 and self.stage == "down":  # Sitting up position
-                    self.stage = "up"
-                    self.count += 1
-                    self.form_feedback = f"Rep {self.count}! Great form!"
-                    
+                elif torso_angle <= self.up_threshold:  # Sitting up
+                    if self.stage == "down":
+                        self.stage = "up"
+                        self.count += 1
+                        self.form_feedback = f"Rep {self.count}! Great form!"
+                    elif self.stage is None:
+                        self.stage = "up"
+                        self.form_feedback = "Go Down first"
                 else:
-                    # In between positions with better guidance
-                    if self.stage == "down" and 100 <= torso_angle <= 150:
+                    if self.stage == "down":
                         self.form_feedback = "Keep Going Up!"
-                    elif self.stage == "up" and 100 <= torso_angle <= 150:
+                    elif self.stage == "up":
                         self.form_feedback = "Go Down Slowly"
-                    elif torso_angle > 150:
-                        self.form_feedback = "Ready Position"
-                    else:
-                        self.form_feedback = "Get in Position"
+                    elif self.stage is None:
+                        self.stage = "down"
+                        self.form_feedback = "Go Up!"
                 
                 # Draw pose landmarks
                 self.mp_draw.draw_landmarks(
