@@ -513,21 +513,21 @@
                     document.getElementById('weight-uncertainty').textContent =
                         (typeof wu === 'number') ? `Uncertainty: ±${wu.toFixed(1)} kg` : (wu ? `Uncertainty: ${wu}` : '');
 
-                    // BMI only from a real weight: a camera-only "typical weight" would just give back a typical BMI
+                    // BMI: real when the weight is from a scale/typed; marked "estimated" when the camera estimated the weight
                     const $id = (id) => document.getElementById(id) || { textContent: '', style: {}, className: '' };
                     const hcm = result.final_height_cm || result.height_cm, wkg = result.final_weight_kg || result.weight_kg;
-                    const weightIsGuess = /estimate/i.test(String(result.weight_uncertainty || ''));
+                    const weightIsGuess = result.bmi_estimated === true || /estimate/i.test(String(result.weight_uncertainty || ''));
                     let bmi = (typeof result.bmi === 'number') ? result.bmi : null;
-                    if (bmi === null && !weightIsGuess && hcm && wkg) bmi = wkg / Math.pow(hcm / 100, 2);
+                    if (bmi === null && hcm && wkg) bmi = wkg / Math.pow(hcm / 100, 2);
                     const bmiStatusElement = $id('bmi-status');
                     if (bmi !== null) {
                         animateNumber($id('bmi-value'), bmi);
                         const bmiInfo = getBMIStatus(bmi);
-                        bmiStatusElement.textContent = bmiInfo.status;
+                        bmiStatusElement.textContent = weightIsGuess ? `${bmiInfo.status} (estimated - weigh on a scale to confirm)` : bmiInfo.status;
                         bmiStatusElement.className = `bmi-status ${bmiInfo.class}`;
                     } else {
                         $id('bmi-value').textContent = '—';
-                        bmiStatusElement.textContent = 'Needs your real weight (scale)';
+                        bmiStatusElement.textContent = 'Add your weight to get the BMI';
                         bmiStatusElement.className = 'bmi-status';
                     }
 
@@ -545,7 +545,7 @@
                     $id('measurement-date').textContent = result.timestamp ? formatDate(result.timestamp) : '—';
                     $id('calibration-quality').textContent = (typeof result.calibration_quality === 'number')
                         ? result.calibration_quality.toFixed(2) + 'px'
-                        : (/estimate/i.test(String(result.confidence_level || '')) ? 'Body estimate (±8 cm)'
+                        : (/estimate/i.test(String(result.confidence_level || '')) ? 'Body estimate (no wall sheets)'
                            : (result.confidence_level ? 'Wall sheets (±1 cm)' : '—'));
                     $id('processing-time').textContent =
                         result.processing_time_ms ? Math.round(result.processing_time_ms) : '—';

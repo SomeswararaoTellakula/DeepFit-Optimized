@@ -476,6 +476,13 @@ SHOULDER_BY_AGE = [(4, 24.0), (6, 26.0), (8, 28.0), (10, 30.0), (12, 32.0), (14,
 SHOULDER_ADULT = {"male": 41.2, "female": 36.8}
 BMI_BY_AGE = [(5, 15.3), (8, 15.7), (10, 16.5), (12, 17.7), (14, 19.3), (16, 20.5)]    # WHO BMI-for-age medians
 BMI_ADULT = {"male": 23.0, "female": 22.0}
+# typical height (cm) by age - approximate IAP 2015 (Indian children) 50th centiles; adults: approx. Indian averages.
+# Only a gentle pull for a noisy reading (see _body_reading); it never replaces what the camera saw.
+HEIGHT_BY_AGE = {"male": [(5, 108.0), (8, 125.0), (10, 136.0), (12, 147.0), (14, 160.0), (16, 168.0)],
+                 "female": [(5, 107.0), (8, 124.0), (10, 136.0), (12, 148.0), (14, 155.0), (16, 157.0)]}
+HEIGHT_ADULT = {"male": 170.0, "female": 157.0}
+HEIGHT_PRIOR_SD = 9.0          # cm: how widely heights vary at one age
+WAIST_RATIO_REF = 0.185        # outline width at the waist / height, for a median-BMI body (frontal view)
 BODY_NEED = 40             # frames standing still before it measures by itself (~3-5 s)
 BODY_MIN = 8               # frames needed before "capture" can give a number
 BODY_UNCERTAINTY_CM = 8
@@ -507,6 +514,59 @@ def _by_age(table, adult: Dict[str, float], age, sex) -> float:
 def typical_weight(height_cm: float, age=None, sex=None) -> float:
     """A typical (median-BMI) weight for this height and age - an estimate, not a weighing."""
     return round(_by_age(BMI_BY_AGE, BMI_ADULT, age, sex) * (height_cm / 100) ** 2, 1)
+
+
+def typical_height(age=None, sex=None) -> float:
+    if sex:
+        return _by_age(HEIGHT_BY_AGE[sex], HEIGHT_ADULT, age, sex)
+    return (_by_age(HEIGHT_BY_AGE["male"], HEIGHT_ADULT, age, "male") + _by_age(HEIGHT_BY_AGE["female"], HEIGHT_ADULT, age, "female")) / 2
+
+
+def shape_weight(height_cm: float, waist_ratio: Optional[float], age=None, sex=None) -> Dict:
+    """Weight estimate from the body outline (like the old app: a base BMI adjusted by body build).
+    Mass grows with width x depth x height, so BMI grows ~ with (outline width / height)^2. Clamped and only
+    partly trusted (60 %), because clothes and posture change the outline. Always an estimate, never a weighing."""
+    base = _by_age(BMI_BY_AGE, BMI_ADULT, age, sex)
+    factor = 1.0
+    if waist_ratio:
+        f = (waist_ratio / WAIST_RATIO_REF) ** 2
+        factor = 1 + 0.6 * (max(0.75, min(1.45, f)) - 1)
+    bmi = base * factor
+    return {"weight_kg": round(bmi * (height_cm / 100) ** 2, 1), "bmi": round(bmi, 1),
+            "build": "slim" if factor < 0.93 else "broad" if factor > 1.07 else "average", "from_outline": bool(waist_ratio)}
+
+
+def waist_width(mask: Optional[np.ndarray], lm, w: int, h: int) -> Optional[float]:
+    """Outline width (px) of the trunk at the waist - the run of person pixels around the body's midline.
+    Rows where the arms touch the body (run much wider than the hips) are skipped."""
+    if mask is None:
+        return None
+    P = lambda i: (lm[i][0] * w, lm[i][1] * h)
+    hx = (P(L_HIP)[0] + P(R_HIP)[0]) / 2
+    hip_px = abs(P(L_HIP)[0] - P(R_HIP)[0])
+    sy = (P(L_SHOULDER)[1] + P(R_SHOULDER)[1]) / 2
+    hy = (P(L_HIP)[1] + P(R_HIP)[1]) / 2
+    if hip_px < 6 or hy - sy < 20:
+        return None
+    widths = []
+    for f in (0.62, 0.70, 0.78, 0.86):
+        r = int(sy + f * (hy - sy))
+        if not 0 <= r < mask.shape[0]:
+            continue
+        row = mask[r] >= 0.5
+        c = int(min(mask.shape[1] - 1, max(0, hx)))
+        if not row[c]:
+            continue
+        a = c
+        while a > 0 and row[a - 1]:
+            a -= 1
+        b = c
+        while b < mask.shape[1] - 1 and row[b + 1]:
+            b += 1
+        wd = b - a + 1
+        if 1.2 * hip_px <= wd <= 2.9 * hip_px:            # wider: an arm is touching the side
+            widths.append(wd)
+    return float(median(widths)) if widths else None
 
 
 def body_estimate(lm, mask: Optional[np.ndarray], w: int, h: int, age=None, sex=None) -> Dict:
@@ -544,7 +604,9 @@ def body_estimate(lm, mask: Optional[np.ndarray], w: int, h: int, age=None, sex=
     est = (0.9 * by_eyes + 0.7 * by_shoulders) / 1.6            # the original estimator's weights
     if not 70 <= est <= 230:
         return {"problem": "body_unsure"}
-    return {"height_cm": float(est), "by_eyes": float(by_eyes), "by_shoulders": float(by_shoulders)}
+    ww = waist_width(mask, lm, w, h)
+    return {"height_cm": float(est), "by_eyes": float(by_eyes), "by_shoulders": float(by_shoulders),
+            "waist_ratio": float(ww / px) if ww else None}
 
 
 PROBLEM_TEXT = {
@@ -584,7 +646,8 @@ class HeightWeight(Exercise):
                 "picture-to-wall mapping in cm even if the camera is tilted, and the head top's distance from the wall is "
                 "corrected. It finishes when 25 frames agree within ±0.5 cm (accuracy ≈ ±1 cm). "
                 "Weight is read from your scale (photo) or typed.")
-    form_cues = ["Stand tall, chin level", "Stay still for 3 seconds", "Hair flat, no cap, no shoes"]
+    form_cues = ["Stand tall, chin level", "Stay still for 3 seconds", "Hair flat, no cap, no shoes",
+                 "Arms a little away from your sides (helps the weight estimate)"]
     blind_adaptation = ["A helper tapes the sheet and guides the athlete to the wall; spoken 'hold still' and the result"]
     deaf_adaptation = ["Big captions for each step; green flash when measured"]
 
@@ -604,6 +667,7 @@ class HeightWeight(Exercise):
         self.body_samples: List[float] = []        # no sheets: estimates from the body's own proportions
         self.body_parts: List = []
         self.body: Optional[Dict] = None
+        self.waist_ratios: List[float] = []
 
     def configure(self, weight_kg=None, weight_source=None, weight_detail=None, age=None, sex=None, **_):
         try:
@@ -656,6 +720,8 @@ class HeightWeight(Exercise):
             return
         self.body_samples = (self.body_samples + [e["height_cm"]])[-120:]
         self.body_parts = (self.body_parts + [(e["by_eyes"], e["by_shoulders"])])[-120:]
+        if e.get("waist_ratio"):
+            self.waist_ratios = (self.waist_ratios + [e["waist_ratio"]])[-120:]
         n = len(self.body_samples)
         if n >= BODY_NEED:
             self._finish_body("auto")
@@ -665,18 +731,40 @@ class HeightWeight(Exercise):
     def _body_reading(self) -> Optional[Dict]:
         if len(self.body_samples) < BODY_MIN:
             return None
-        v = sorted(self.body_samples[-BODY_NEED:])
-        k = len(v) // 4
-        mid = v[k:len(v) - k] or v
-        est = median(v)
         parts = self.body_parts[-BODY_NEED:]
-        by_eyes, by_sh = median(p[0] for p in parts), median(p[1] for p in parts)
+        eyes = sorted(p[0] for p in parts)
+        shs = sorted(p[1] for p in parts)
+
+        def trimmed(v):                                     # middle half: one blinking or twisting frame doesn't decide it
+            k = len(v) // 4
+            mid = v[k:len(v) - k] or v
+            return sum(mid) / len(mid), (mid[-1] - mid[0]) / 2 + 0.5
+        e_cm, e_sd = trimmed(eyes)
+        s_cm, s_sd = trimmed(shs)
+        # each ruler weighted by how steady it is (inverse variance) and how much it varies between people
+        # (eye spacing ~5 %, shoulder width ~7 % of the reading)
+        we = 1 / (e_sd ** 2 + (0.05 * e_cm) ** 2)
+        ws = 1 / (s_sd ** 2 + (0.07 * s_cm) ** 2)
+        cam = (we * e_cm + ws * s_cm) / (we + ws)
+        cam_sd = math.sqrt(1 / (we + ws) + ((e_cm - s_cm) / 2) ** 2 * 0.5)
+        # gentle pull towards the typical height for this age and sex - weighted by how unsure the camera is
+        prior = typical_height(self.age, self.sex)
+        k = min(0.2, cam_sd ** 2 / (cam_sd ** 2 + HEIGHT_PRIOR_SD ** 2))   # capped: a tall or short athlete must stay tall or short
+        est = cam + k * (prior - cam)
+        v = sorted(self.body_samples[-BODY_NEED:])
+        q = len(v) // 4
+        mid = v[q:len(v) - q] or v
         spread = (mid[-1] - mid[0]) / 2
-        # how well the two rulers agree and how steady the reading is (not an accuracy promise)
-        agree = abs(by_eyes - by_sh) / est
+        agree = abs(e_cm - s_cm) / est
         conf = int(max(20, min(90, round(92 - 250 * agree - 250 * spread / est))))
-        return {"height_cm": round(est, 1), "spread_cm": round(spread, 1), "samples": len(v), "by_eyes_cm": round(by_eyes, 1),
-                "by_shoulders_cm": round(by_sh, 1), "confidence": conf}
+        waist = median(self.waist_ratios[-BODY_NEED:]) if len(self.waist_ratios) >= 5 else None
+        return {"height_cm": round(est, 1), "camera_cm": round(cam, 1), "spread_cm": round(spread, 1), "samples": len(v),
+                "by_eyes_cm": round(e_cm, 1), "by_shoulders_cm": round(s_cm, 1), "confidence": conf,
+                "uncertainty_cm": round(max(4.0, min(10.0, (1 - k) * cam_sd + 2))),
+                "waist_ratio": round(waist, 3) if waist else None}
+
+    def _estimated_weight(self, r: Dict) -> Dict:
+        return shape_weight(r["height_cm"], r.get("waist_ratio"), self.age, self.sex)
 
     def _finish_body(self, how: str):
         r = self._body_reading()
@@ -684,7 +772,7 @@ class HeightWeight(Exercise):
             return
         self.body = {**r, "how": how}
         self.finished = True
-        w = self.weight_kg or typical_weight(r["height_cm"], self.age, self.sex)
+        w = self.weight_kg or self._estimated_weight(r)["weight_kg"]
         self.feedback = f"Height ≈ {r['height_cm']:.0f} cm · weight ≈ {w:.0f} kg"
         self.event("rep", f"About {r['height_cm']:.0f} centimetres")
 
@@ -720,7 +808,8 @@ class HeightWeight(Exercise):
             r = {"height_cm": round(median(self.body_samples), 1), "confidence": 20}
         if r is None:
             return {"mode": "body", "height_cm": None, "weight_kg": None, "confidence": 0, "samples": 0, "need": BODY_NEED}
-        wv = self.weight_kg or typical_weight(r["height_cm"], self.age, self.sex)
+        wv = self.weight_kg or (self._estimated_weight(r)["weight_kg"] if "samples" in r
+                                else typical_weight(r["height_cm"], self.age, self.sex))
         return {"mode": "body", "height_cm": r["height_cm"], "weight_kg": wv, "weight_estimated": not self.weight_kg,
                 "confidence": r["confidence"], "samples": len(self.body_samples), "need": BODY_NEED}
 
@@ -767,19 +856,29 @@ class HeightWeight(Exercise):
         r = super().result()
         b = self.body
         real = self.weight_kg is not None
-        w = self.weight_kg if real else typical_weight(b["height_cm"], self.age, self.sex)
+        sw = self._estimated_weight(b)
+        w = self.weight_kg if real else sw["weight_kg"]
+        unc = b.get("uncertainty_cm") or BODY_UNCERTAINTY_CM
+        if real:
+            bm = bmi_info(b["height_cm"], w, self.age)
+        else:
+            bm = bmi_info(b["height_cm"], w, self.age)
+            bm["bmi_note"] = ("Estimated BMI: height and weight both come from the camera (body outline, "
+                              f"{sw['build']} build). Weigh on a scale for a real BMI.")
+            bm["bmi_estimated"] = True
         r.update({"height_cm": b["height_cm"], "weight_kg": w, "weight_source": self.weight_source if real else "estimate",
-                  "weight_detail": self.weight_detail,
-                  **(bmi_info(b["height_cm"], w, self.age) if real else
-                     {"bmi": None, "bmi_category": None,
-                      "bmi_note": "Height and weight are estimates from your body. BMI needs your weight from a scale."}),
+                  "weight_detail": self.weight_detail if real else {"method": "body outline" if sw["from_outline"] else "typical for height",
+                                                                    "build": sw["build"]},
+                  **bm,
                   "estimate": True,
-                  "measurement": {"reference": "body", "estimate": True, "uncertainty_cm": BODY_UNCERTAINTY_CM,
+                  "measurement": {"reference": "body", "estimate": True, "uncertainty_cm": unc,
                                   "samples": b["samples"], "spread_cm": b["spread_cm"], "stable": True,
                                   "confidence": b["confidence"], "by_eyes_cm": b["by_eyes_cm"],
-                                  "by_shoulders_cm": b["by_shoulders_cm"], "how": b["how"], "problems": self.problems,
-                                  "method": "estimated from body proportions (eye spacing and shoulder width), no wall sheets; "
-                                            "weight = typical for that height and age"}})
+                                  "by_shoulders_cm": b["by_shoulders_cm"], "camera_cm": b.get("camera_cm"),
+                                  "waist_ratio": b.get("waist_ratio"), "how": b["how"], "problems": self.problems,
+                                  "method": "estimated from body proportions (eye spacing and shoulder width, each weighted by "
+                                            "how steady it was), gently pulled to the typical height for the age; no wall sheets. "
+                                            "Weight = base BMI for the age adjusted by the body outline width"}})
         r.pop("incomplete", None)
         return r
 

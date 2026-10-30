@@ -31,35 +31,61 @@ class SitUps extends Exercise {
     return side != null ? ramp(elevation(pose.p(side[1]), pose.p(side[0])), 5, upElev) : null;
   }
 
+  static const lieHip = 140.0, sitHip = 100.0; // hip angle: lying open > 140, sitting up < 100 (original rule)
+  static const lowVis = 0.2; // lying on the floor, the pose model is often unsure - still usable
+
   @override
   void process(BodyPose pose, double t) {
-    final side = pose.bestSide([L.lShoulder, L.lHip, L.lKnee], [L.rShoulder, L.rHip, L.rKnee]);
-    if (side == null) {
-      feedback = 'Turn side-on so your shoulder, hip and knee are visible';
+    // hip angle (average of the sides the camera sees, like the original counter) + torso angle (clearer side)
+    final sides = <List<num>>[];
+    for (final sd in [
+      [L.lShoulder, L.lHip, L.lKnee],
+      [L.rShoulder, L.rHip, L.rKnee]
+    ]) {
+      final v = math.min(pose.pts[sd[0]][2], math.min(pose.pts[sd[1]][2], pose.pts[sd[2]][2]));
+      if (v >= lowVis) sides.add([v, sd[0], sd[1], sd[2]]);
+    }
+    if (sides.isEmpty) {
+      feedback = 'Lie down side-on to the camera - shoulder, hip and knee visible';
       return;
     }
-    if (!bonesOk(pose, [[side[0], side[1]], [side[1], side[2]]])) return;
-    final elev = sm('elev', elevation(pose.p(side[1]), pose.p(side[0])), t);
+    var hipSum = 0.0;
+    for (final sd in sides) {
+      hipSum += angle(pose.p(sd[1] as int), pose.p(sd[2] as int), pose.p(sd[3] as int));
+    }
+    final hipRaw = hipSum / sides.length;
+    var best = sides.first;
+    for (final sd in sides) {
+      if (sd[0] > best[0] || (sd[0] == best[0] && sd[1] > best[1])) best = sd;
+    }
+    final s = best[1] as int, h = best[2] as int;
+    final elevRaw = elevation(pose.p(h), pose.p(s));
+    if (!bonesOk(pose, [[s, h]])) return;
+    final hip = sm('hip', hipRaw, t);
+    final elev = sm('elev', elevRaw, t);
+    final standing = elev > 65 && hip > 150; // upright on the feet: not lying, not a sit-up
+    final lying = !standing && (elev < downElev || (hip > lieHip && elev < 45));
+    final sitting = hip < sitHip || (elev > upElev && hip < 135);
     if (rs.stage == 'down') {
       // a half sit-up: rose clearly off the floor but lay back down before sitting up -> not counted
-      if (elev > halfElev) {
+      if (elev > halfElev || hip < 125) {
         _half = true;
-      } else if (elev < downElev && _half) {
+      } else if (lying && _half) {
         _half = false;
         invalid += 1;
         fault('half_situp', 'Sit up all the way - chest up to your knees');
       }
     }
-    final st = rs.see(elev < downElev ? 'down' : (elev > upElev ? 'up' : null), t);
+    final st = rs.see(lying ? 'down' : (sitting ? 'up' : null), t);
     if (st == 'up') {
       _half = false;
-      feedback = 'Good - now lie back down';
-    } else if (st == 'down') {
-      if (rs.prev == 'up') {
-        rep();
+      if (rs.prev == 'down') {
+        rep('Rep ${count + 1}! Now lie back down'); // counted as you sit up (original)
       } else {
-        feedback = 'Sit up!';
+        feedback = 'Lie back down to start';
       }
+    } else if (st == 'down') {
+      feedback = count == 0 ? 'Go up!' : 'Good - sit up again';
     }
   }
 }

@@ -150,7 +150,7 @@
         el.badge.style.display = 'block'; el.badge.textContent = 'Get ready...';
         showButtons(true);
         startListening();
-        say('Stand straight and hold still. Say capture when you are ready.');
+        say('Stand straight, arms a little away from your sides, and hold still. Say capture when you are ready.');
         pollTimer = setInterval(poll, 500);
     }
     el.open.addEventListener('click', open);

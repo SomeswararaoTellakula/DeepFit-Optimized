@@ -433,7 +433,8 @@ def height_record(doc: Dict) -> Dict:
             "final_weight_kg": doc.get("weight_kg"), "bmi": doc.get("bmi"), "bmi_category": doc.get("bmi_category"),
             "height_uncertainty": (f"±{m.get('uncertainty_cm') or 8} cm (estimate)" if est
                                    else f"±{max(0.5, m.get('spread_cm') or 0.5):.1f} cm"),
-            "weight_uncertainty": ("typical weight for this height (estimate)" if ws == "estimate"
+            "bmi_estimated": bool(doc.get("bmi_estimated")), "bmi_note": doc.get("bmi_note"),
+            "weight_uncertainty": ("from body outline (estimate, about ±8 kg)" if ws == "estimate"
                                    else "as the scale" if ws == "scale_photo" else "typed"),
             "confidence_level": (f"estimate from body proportions, about ±{m.get('uncertainty_cm') or 8} cm" if est
                                  else "camera, about ±1 cm"), "total_instances": m.get("samples"),
@@ -448,7 +449,8 @@ def load_benchmark(ex, res: Dict, ath: Dict, population: str) -> Optional[Dict]:
         if not res.get("height_cm"):
             return {"available": False}
         return {"available": True, "unit": "cm",
-                "rating": res.get("bmi_category") or ("Estimated" if res.get("estimate") else "Measured" if res.get("bmi") else "Height only"),
+                "rating": ((res.get("bmi_category") + (" (estimated)" if res.get("bmi_estimated") else "")) if res.get("bmi_category") else None)
+                          or ("Estimated" if res.get("estimate") else "Measured" if res.get("bmi") else "Height only"),
                 "bmi": res.get("bmi"), "note": res.get("bmi_note") or "Add your weight to get the BMI."}
     if not isinstance(ex, EE.DumbbellCurls) or not res.get("load_kg"):
         return None

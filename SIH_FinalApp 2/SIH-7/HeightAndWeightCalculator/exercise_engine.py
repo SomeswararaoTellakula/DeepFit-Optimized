@@ -303,7 +303,8 @@ class SitUps(Exercise):
     HALF_ELEV = 35                # rose past this but lay back down before 55 = a half sit-up (shown in form quality)
     setup = ["Lie on your back, knees bent, feet flat", "Hands crossed on chest or behind head",
              "Place the phone side-on, about 2 m away, whole body visible"]
-    counting = "One rep = from lying (torso under 20° from the floor) to sitting up (over 55°) and back down."
+    counting = ("One rep = from lying (hip open, torso under 20° from the floor) to sitting up (hip angle under 100°, "
+                "or torso over 55°). Counted as you sit up; lie back down before the next one.")
     form_cues = ["Keep feet on the floor", "Don't pull your neck", "Shoulders touch the floor each rep"]
     blind_adaptation = ["Spoken count after every rep", "Spoken time left at 30 s and 10 s",
                         "A helper may place the athlete on the mat, then steps out of view"]
@@ -318,31 +319,55 @@ class SitUps(Exercise):
         side = pose.best_side([L_SHOULDER, L_HIP], [R_SHOULDER, R_HIP])
         return _ramp(elevation(pose.p(side[1]), pose.p(side[0])), 5, self.UP_ELEV) if side else None
 
+    LIE_HIP, SIT_HIP = 140, 100   # hip angle (shoulder-hip-knee): lying open > 140, sitting up < 100 (original DeepFit rule)
+    LOW_VIS = 0.2                 # lying on the floor, the pose model is often unsure - still usable, as in the original
+
+    def _signals(self, pose):
+        """Hip angle (average of the sides the camera sees, like the original counter) and torso angle from the
+        floor (the clearer side). Works side-on and at an angle; no hard visibility cut-off."""
+        sides = []
+        for s_, h_, k_ in ((L_SHOULDER, L_HIP, L_KNEE), (R_SHOULDER, R_HIP, R_KNEE)):
+            v = min(pose.pts[i][2] for i in (s_, h_, k_))
+            if v >= self.LOW_VIS:
+                sides.append((v, s_, h_, k_))
+        if not sides:
+            return None
+        hip = sum(angle(pose.p(s_), pose.p(h_), pose.p(k_)) for _, s_, h_, k_ in sides) / len(sides)
+        _, s_, h_, _ = max(sides)
+        return hip, elevation(pose.p(h_), pose.p(s_)), (s_, h_)
+
     def process(self, pose, t):
-        side = pose.best_side([L_SHOULDER, L_HIP, L_KNEE], [R_SHOULDER, R_HIP, R_KNEE])
-        if not side:
-            self.feedback = "Turn side-on so your shoulder, hip and knee are visible"
+        sig = self._signals(pose)
+        if sig is None:
+            self.feedback = "Lie down side-on to the camera - shoulder, hip and knee visible"
             return
-        if not self.bones_ok(pose, [(side[0], side[1]), (side[1], side[2])]):
+        hip_raw, elev_raw, (s_, h_) = sig
+        if not self.bones_ok(pose, [(s_, h_)]):
             return
-        elev = self.sm("elev", elevation(pose.p(side[1]), pose.p(side[0])), t)
+        hip = self.sm("hip", hip_raw, t)
+        elev = self.sm("elev", elev_raw, t)
+        standing = elev > 65 and hip > 150                     # upright on the feet: not lying, not a sit-up
+        lying = not standing and (elev < self.DOWN_ELEV or (hip > self.LIE_HIP and elev < 45))
+        sitting = hip < self.SIT_HIP or (elev > self.UP_ELEV and hip < 135)
         if self.rs.stage == "down":
+            self._peak = max(getattr(self, "_peak", 0.0), elev)
             # a half sit-up: rose clearly off the floor but lay back down before sitting up -> not counted
-            if elev > self.HALF_ELEV:
+            if elev > self.HALF_ELEV or hip < 125:
                 self._half = True
-            elif elev < self.DOWN_ELEV and getattr(self, "_half", False):
+            elif lying and getattr(self, "_half", False):
                 self._half = False
                 self.invalid += 1
                 self.fault("half_situp", "Sit up all the way - chest up to your knees")
-        st = self.rs.see("down" if elev < self.DOWN_ELEV else ("up" if elev > self.UP_ELEV else None), t)
+        st = self.rs.see("down" if lying else ("up" if sitting else None), t)
         if st == "up":
             self._half = False
-            self.feedback = "Good - now lie back down"
-        elif st == "down":
-            if self.rs.prev == "up":
-                self.rep()
+            if self.rs.prev == "down":
+                self.rep("Rep {}! Now lie back down".format(self.count + 1))   # counted as you sit up (original)
             else:
-                self.feedback = "Sit up!"
+                self.feedback = "Lie back down to start"
+        elif st == "down":
+            self._peak = 0.0
+            self.feedback = "Go up!" if self.count == 0 else "Good - sit up again"
 
 
 def _ramp(x, lo, hi):

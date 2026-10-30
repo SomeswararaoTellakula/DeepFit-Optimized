@@ -988,6 +988,8 @@ def get_latest_measurement():
                     'final_height_cm': final_estimate.get('final_height_cm'),
                     'final_weight_kg': final_estimate.get('final_weight_kg'),
                     'bmi': final_estimate.get('bmi'),
+                    'bmi_category': final_estimate.get('bmi_category'),
+                    'bmi_estimated': bool(final_estimate.get('bmi_estimated')),
                     'height_uncertainty': final_estimate.get('height_uncertainty'),
                     'weight_uncertainty': final_estimate.get('weight_uncertainty'),
                     'confidence_level': final_estimate.get('confidence_level'),
