@@ -1,13 +1,12 @@
 /*
  * DeepFit - the original full-screen Height & Weight page, measured by the shared engine (stature.py).
  *
- *   Verify Face -> Open Exercise -> stand still (it measures by itself after ~5 s)
- *   or say "capture" / press S -> the height and weight are shown and SPOKEN, and saved
+ *   Verify Face -> enter a scale reading if available -> Open Exercise -> stand still
+ *   or say "capture" / press S -> the height and weight are shown and saved
  *   -> Submit (F) opens the cumulative results.  R = measure again, Q = quit.
  *
  * With the two DeepFit sheets on the wall the height is measured (about +/-1 cm). Without them it is ESTIMATED
- * from the body's own proportions (about +/-8 cm) and the weight is a typical weight for that height - the
- * screen and the voice say so.
+ * from the body's own proportions (about +/-8 cm). A scale reading is needed for an accurate BMI.
  */
 (function () {
     const CFG = Object.assign({ key: 'height_weight', duration: 60, requireFace: true, verifyUrl: '/api/verify_user_identity',
@@ -19,7 +18,9 @@
         stats: $('statsOverlay'), h: $('heightDisplay'), w: $('weightDisplay'), conf: $('confidenceDisplay'),
         verify: $('verifyFaceBtn'), open: $('openExerciseBtn'), capture: $('saveBtn'), submit: $('submitBtn'), reset: $('resetBtn'),
         badge: $('autoSaveStatus'), result: $('resultPanel'), resH: $('resHeight'), resW: $('resWeight'), resNote: $('resNote'),
-        mic: $('micStatus'), line: $('feedbackLine'),
+        mic: $('micStatus'), line: $('feedbackLine'), weightInput: $('scaleWeightInput'),
+        estimateOption: $('allowBodyEstimate'), resBmi: $('resBmi'), resBmiLabel: $('resBmiLabel'),
+        photoBtn: $('scalePhotoBtn'), photoInput: $('scalePhotoInput'), photoStatus: $('scalePhotoStatus'),
     };
     const notify = (msg, type) => { try { notificationSystem.show(msg, type || 'info'); } catch (e) { } };
     let verified = !CFG.requireFace, running = false, pollTimer = null, result = null, wantSubmit = false, lastFeedback = '';
@@ -119,9 +120,56 @@
         el.submit.style.display = 'inline-block';
         el.reset.style.display = 'inline-block';
     }
+    // ---- weight from a photo of the scale display (read by the vision model on the server)
+    let photoKg = null, photoDetail = null;
+    function photoStatus(text, cls) {
+        if (!el.photoStatus) return;
+        el.photoStatus.textContent = text; el.photoStatus.className = 'scale-photo-status' + (cls ? ' ' + cls : '');
+    }
+    if (el.photoBtn && el.photoInput) {
+        el.photoBtn.addEventListener('click', () => el.photoInput.click());
+        el.photoInput.addEventListener('change', async () => {
+            const f = el.photoInput.files && el.photoInput.files[0];
+            el.photoInput.value = '';
+            if (!f) return;
+            el.photoBtn.disabled = true; photoStatus('Reading the number on your scale...');
+            let d;
+            try {
+                const fd = new FormData(); fd.append('photo', f);
+                d = await (await fetch('/api/vision/scale', { method: 'POST', body: fd })).json();
+            } catch (e) { d = { ok: false, error: 'Could not reach the server - type the weight instead.' }; }
+            el.photoBtn.disabled = false;
+            if (d && d.ok && d.kg) {
+                photoKg = d.kg; photoDetail = { reading: d.reading, unit: d.unit, model: d.model, confidence: d.confidence };
+                el.weightInput.value = d.kg;
+                photoStatus(`Read ${d.reading} ${d.unit} from the scale = ${d.kg} kg. Check it matches your scale.`, 'ok');
+            } else {
+                photoStatus((d && d.error) || 'Could not read the scale - type the weight instead.', 'err');
+            }
+        });
+        el.weightInput.addEventListener('input', () => { photoKg = null; photoDetail = null; photoStatus(''); });
+    }
+
     let feedHandle = null;
+    function failMeasurement(message) {
+        if (!running) return;
+        notify(message, 'error');
+        endRun();
+        el.placeholder.style.display = 'none';
+        el.info.style.display = 'block';
+        el.open.style.display = 'inline-block';
+        fetch(`/ex/${KEY}/abort`, { method: 'POST' }).catch((error) => console.error('Could not stop measurement:', error));
+    }
+
     async function open() {
         if (!verified || running) return;
+        const weightText = el.weightInput.value.trim();
+        const weight = weightText === '' ? null : Number(weightText);
+        if (weight !== null && (!Number.isFinite(weight) || weight < 10 || weight > 250)) {
+            notify('Enter a scale weight between 10 and 250 kg, or leave it blank.', 'warning');
+            el.weightInput.focus();
+            return;
+        }
         el.open.style.display = 'none';
         el.info.style.display = 'none'; el.result.style.display = 'none';
         el.placeholder.style.display = 'flex';
@@ -129,7 +177,15 @@
         let res;
         try {
             res = await (await fetch(`/ex/${KEY}/start`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'standard', source: (window.DeepFitCam ? DeepFitCam.source() : 'auto') }),
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mode: 'standard',
+                    source: (window.DeepFitCam ? DeepFitCam.source() : 'auto'),
+                    weight_kg: weight,
+                    weight_source: weight === null ? null : (photoKg !== null && weight === photoKg ? 'scale_photo' : 'typed'),
+                    weight_detail: (photoKg !== null && weight === photoKg) ? photoDetail : null,
+                    allow_body_estimate: el.estimateOption.checked,
+                }),
             })).json();
         } catch (e) { res = { message: 'Could not reach the server' }; }
         if (!res || res.status !== 'success') {
@@ -140,9 +196,10 @@
             else el.open.style.display = 'inline-block';
             return;
         }
-        running = true; result = null; wantSubmit = false; lastFeedback = '';
-        feedHandle = window.DeepFitCam ? await DeepFitCam.attach(KEY, el.feed, res, (m) => notify(m, 'error'))
+        running = true; result = null; wantSubmit = false; lastFeedback = ''; statsFailures = 0;
+        feedHandle = window.DeepFitCam ? await DeepFitCam.attach(KEY, el.feed, res, failMeasurement)
                                        : (el.feed.src = `/ex/${KEY}/video_feed?t=${Date.now()}`, null);
+        if (!running) return;
         el.feed.style.display = 'block';
         el.placeholder.style.display = 'none';
         el.stats.style.display = 'flex';
@@ -158,16 +215,25 @@
     function fmtCm(v, approx) { return v == null ? '-- cm' : (approx ? '≈ ' : '') + Number(v).toFixed(1) + ' cm'; }
     function fmtKg(v, approx) { return v == null ? '-- kg' : (approx ? '≈ ' : '') + Number(v).toFixed(1) + ' kg'; }
 
+    let statsFailures = 0;
     async function poll() {
         let s;
-        try { s = await (await fetch(`/ex/${KEY}/stats`)).json(); } catch (e) { return; }
+        try {
+            const response = await fetch(`/ex/${KEY}/stats`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            s = await response.json();
+        } catch (e) {
+            if (++statsFailures >= 3) failMeasurement('Could not read measurement status from the server. Please try again.');
+            return;
+        }
+        statsFailures = 0;
         if (!s || s.active === undefined || !running) return;
         const L = s.live || {}, cd = Math.ceil(s.countdown || 0);
         if (cd > 0) { el.badge.textContent = `Get ready... ${cd}`; }
         else if (L.need) el.badge.textContent = `Measuring ${Math.min(L.samples || 0, L.need)}/${L.need}`;
         const approx = L.mode !== 'sheets';
         el.h.textContent = fmtCm(L.height_cm, approx);
-        el.w.textContent = fmtKg(L.weight_kg, approx && L.weight_estimated);
+        el.w.textContent = fmtKg(L.weight_kg, L.weight_estimated);
         el.conf.textContent = (L.confidence || 0) + '%';
         const fb = cd > 0 ? `Get ready... ${cd}` : (s.feedback || '');
         if (fb) { el.line.style.display = 'block'; el.line.textContent = fb; }
@@ -209,9 +275,16 @@
         el.conf.textContent = (M.confidence != null ? M.confidence : (M.stable ? 99 : 0)) + '%';
         el.resH.textContent = (est ? '≈ ' : '') + Math.round(r.height_cm) + ' cm';
         el.resW.textContent = r.weight_kg ? (wEst ? '≈ ' : '') + Math.round(r.weight_kg) + ' kg' : '--';
-        el.resNote.textContent = est
-            ? `Estimated from your body proportions (usually within about ±${M.uncertainty_cm || 8} cm). The weight is a typical weight for this height - a camera cannot weigh you. For an exact height, put the two DeepFit sheets on the wall.`
-            : `Measured with the wall sheets (about ±1 cm).` + (r.bmi ? ` BMI ${r.bmi}${r.bmi_category ? ' - ' + r.bmi_category : ''}.` : '');
+        const bmi = (typeof r.bmi === 'number') ? r.bmi
+            : (r.height_cm && r.weight_kg ? Math.round(r.weight_kg / Math.pow(r.height_cm / 100, 2) * 10) / 10 : null);
+        const bmiEst = wEst || r.bmi_estimated === true;
+        if (el.resBmi) el.resBmi.textContent = bmi != null ? (bmiEst ? '≈ ' : '') + bmi.toFixed(1) : '--';
+        if (el.resBmiLabel) el.resBmiLabel.textContent = bmiEst ? 'BMI (estimated)' : 'BMI' + (r.bmi_category ? ' · ' + r.bmi_category : '');
+        const hNote = est ? `Height estimated from your body proportions (about ±${M.uncertainty_cm || 8} cm) - put the two DeepFit sheets on the wall for ±1 cm.`
+                          : `Height measured with the wall sheets (about ±1 cm).`;
+        const wNote = wEst ? ' Weight and BMI are estimates from your body outline (about ±8 kg) - enter or photograph your scale reading for a real BMI.'
+                           : (r.weight_source === 'scale_photo' ? ' Weight read from your scale photo.' : ' Weight as typed from your scale.');
+        el.resNote.textContent = hNote + wNote + (bmi != null && r.bmi_note && !bmiEst ? ' ' + r.bmi_note : '');
         if (r.saved === false) el.resNote.textContent += ' Not saved - the identity check failed.';
         el.result.querySelector('h2').innerHTML = '<i class="fas fa-check-circle" style="color:#4ade80"></i> ' + (est ? 'Estimated' : 'Measured');
         el.result.style.display = 'block';

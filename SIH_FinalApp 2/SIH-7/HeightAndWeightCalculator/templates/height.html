@@ -214,6 +214,8 @@
             transform: translate(-50%, -50%);
             width: 80%;
             max-width: 600px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
             background: rgba(15, 23, 42, 0.8);
             border: 1px solid rgba(6, 182, 212, 0.3);
             border-radius: 20px;
@@ -222,6 +224,45 @@
             z-index: 80;
             transition: all 0.5s ease;
         }
+
+        .scale-weight-field {
+            display: grid;
+            gap: 8px;
+            margin-top: 20px;
+            color: #e2e8f0;
+            font-size: 14px;
+        }
+        .scale-weight-field input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 11px 12px;
+            border: 1px solid rgba(6, 182, 212, 0.5);
+            border-radius: 8px;
+            background: rgba(15, 23, 42, 0.9);
+            color: white;
+            font: inherit;
+        }
+        .scale-weight-field small { color: #94a3b8; line-height: 1.4; }
+        .scale-photo-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+        .scale-photo-btn {
+            padding: 9px 14px; border-radius: 8px; border: 1px solid rgba(6, 182, 212, 0.6);
+            background: rgba(6, 182, 212, 0.15); color: #e2e8f0; font: inherit; font-size: 13px; cursor: pointer;
+        }
+        .scale-photo-btn:disabled { opacity: 0.6; cursor: wait; }
+        .sheet-link { color: #67e8f9; font-size: 13px; }
+        .scale-photo-status { margin-top: 6px; font-size: 13px; color: #94a3b8; min-height: 18px; }
+        .scale-photo-status.ok { color: #4ade80; }
+        .scale-photo-status.err { color: #fca5a5; }
+        .estimate-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 9px;
+            margin-top: 12px;
+            color: #cbd5e1;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .estimate-option input { margin-top: 3px; accent-color: #06b6d4; }
 
         .info-grid {
             display: grid;
@@ -326,28 +367,45 @@
             <div style="text-align: center; margin-bottom: 25px;">
                 <i class="fas fa-robot fa-3x pulse-icon" style="color: #06b6d4; margin-bottom: 15px;"></i>
                 <h2 style="margin: 0; color: white;">AI System Ready</h2>
-                <p style="color: #64748b; font-size: 14px;">Advanced Body Metric Estimation Engine</p>
             </div>
             <div class="info-grid">
                 <div class="info-section">
                     <h4><i class="fas fa-list-check"></i> Measurement Rules</h4>
                     <ul class="info-list">
-                        <li><i class="fas fa-circle"></i> Stand 2-3 meters from camera</li>
+                        <li><i class="fas fa-circle"></i> For best height accuracy, print and place both DeepFit FLOOR and TOP reference sheets on the same wall</li>
+                        <li><i class="fas fa-circle"></i> Stand 2-3 meters away with the camera at chest height</li>
                         <li><i class="fas fa-circle"></i> Full body must be visible (head to feet)</li>
                         <li><i class="fas fa-circle"></i> Face the camera, arms down, feet together</li>
-                        <li><i class="fas fa-circle"></i> Wear form-fitting clothes, no shoes or cap</li>
+                        <li><i class="fas fa-circle"></i> Stand against the wall, barefoot, with hair flat and no cap</li>
                     </ul>
                 </div>
                 <div class="info-section">
                     <h4><i class="fas fa-person-walking"></i> Instructions</h4>
                     <ul class="info-list">
                         <li><i class="fas fa-chevron-right"></i> Verify face for security</li>
+                        <li><i class="fas fa-chevron-right"></i> Enter your current scale reading below for an accurate BMI</li>
                         <li><i class="fas fa-chevron-right"></i> Press Open Exercise and stand straight</li>
                         <li><i class="fas fa-chevron-right"></i> Stay still for 5 seconds - or say "capture"</li>
-                        <li><i class="fas fa-chevron-right"></i> Your height and weight are spoken and saved</li>
+                        <li><i class="fas fa-chevron-right"></i> Without a scale reading, weight and BMI cannot be measured accurately</li>
                     </ul>
                 </div>
             </div>
+            <label class="scale-weight-field" for="scaleWeightInput">
+                Weight from scale (kg)
+                <input id="scaleWeightInput" type="number" min="10" max="250" step="0.1" inputmode="decimal"
+                       placeholder="Example: 68.5">
+                <small>Weigh yourself on a scale first. A camera cannot measure body weight; a scale reading gives the most reliable BMI.</small>
+            </label>
+            <div class="scale-photo-row">
+                <button type="button" id="scalePhotoBtn" class="scale-photo-btn"><i class="fas fa-camera"></i> Read my scale from a photo</button>
+                <input id="scalePhotoInput" type="file" accept="image/*" capture="environment" hidden>
+                <a class="sheet-link" href="/height/marker" target="_blank" rel="noopener"><i class="fas fa-print"></i> Print the FLOOR + TOP sheets (±1 cm height)</a>
+            </div>
+            <div class="scale-photo-status" id="scalePhotoStatus"></div>
+            <label class="estimate-option" for="allowBodyEstimate">
+                <input id="allowBodyEstimate" type="checkbox" checked>
+                <span>No sheets? Estimate my height from my body proportions (about ±4-8 cm). The sheets are always used when the camera sees them.</span>
+            </label>
         </div>
 
         <!-- Result -->
@@ -356,6 +414,7 @@
             <div class="big">
                 <div><b id="resHeight">--</b><span>Height</span></div>
                 <div><b id="resWeight">--</b><span>Weight</span></div>
+                <div><b id="resBmi">--</b><span id="resBmiLabel">BMI</span></div>
             </div>
             <div class="note" id="resNote"></div>
             <div class="note" style="color:#64748b">Press <b>Submit (F)</b> to see all your results, or <b>Reset (R)</b> to measure again.</div>
@@ -387,6 +446,6 @@
     {% include 'partials/verify_view.html' %}
     <script>window.CLASSIC = {{ (classic or {})|tojson }};</script>
     <script src="{{ url_for('static', filename='js/browser_cam.js', v='1') }}"></script>
-    <script src="{{ url_for('static', filename='js/classic_height.js', v='2') }}"></script>
+    <script src="{{ url_for('static', filename='js/classic_height.js', v='5') }}"></script>
 </body>
 </html>

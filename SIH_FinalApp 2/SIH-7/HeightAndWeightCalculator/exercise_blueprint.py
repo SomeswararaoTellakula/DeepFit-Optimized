@@ -563,6 +563,13 @@ def start(key):
         return jsonify(err[0]), err[1]
     data = request.get_json(silent=True) or {}
     mode = data.get("mode") if data.get("mode") in MODES else _mode()
+    if key == "height_weight" and data.get("weight_kg") not in (None, ""):
+        try:
+            weight = float(data["weight_kg"])
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Scale weight must be a number between 10 and 250 kg."}), 400
+        if not 10 <= weight <= 250:
+            return jsonify({"status": "error", "message": "Scale weight must be between 10 and 250 kg."}), 400
     try:
         h = float(data.get("height_cm") or 0)
         if 100 <= h <= 230:
@@ -595,7 +602,8 @@ def start(key):
             wd = data.get("weight_detail") if isinstance(data.get("weight_detail"), dict) else None
             ACTIVE.ex.configure(weight_kg=data.get("weight_kg"), weight_source=data.get("weight_source"),
                                 weight_detail={k: wd.get(k) for k in ("reading", "unit", "model", "confidence")} if wd else None,
-                                age=ath.get("age"), sex=ath.get("gender"))
+                                age=ath.get("age"), sex=ath.get("gender"),
+                                allow_body_estimate=data.get("allow_body_estimate") is True)
         if key == "growth_measures":
             def num(name, lo, hi):
                 try:

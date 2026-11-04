@@ -398,6 +398,8 @@ def measure(bgr, lm, mask: Optional[np.ndarray], refs: Optional[Dict] = None, fo
         return {"problem": "no_reference", "refs": refs}
     if lm is None:
         return {"problem": "no_person", "refs": refs}
+    if not refs.get("top"):
+        return {"problem": "no_top_reference", "refs": refs}
     vis = lambda *ids: all(lm[i][2] >= 0.5 for i in ids)
     if not vis(NOSE, L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_ANKLE, R_ANKLE):
         return {"problem": "not_whole_body", "refs": refs}
@@ -406,8 +408,6 @@ def measure(bgr, lm, mask: Optional[np.ndarray], refs: Optional[Dict] = None, fo
         knees = [angle(P(L_HIP), P(L_KNEE), P(L_ANKLE)), angle(P(R_HIP), P(R_KNEE), P(R_ANKLE))]
         if min(knees) < 165:
             return {"problem": "not_straight", "refs": refs}
-    if not refs.get("top"):
-        return {"problem": "no_top_reference", "refs": refs}
     if mask is None:
         return {"problem": "no_mask", "refs": refs}
     top = head_top(mask, lm, w, h)
@@ -662,6 +662,7 @@ class HeightWeight(Exercise):
         self.weight_detail: Optional[Dict] = None
         self.age = None
         self.problems: Dict[str, int] = {}
+        self.allow_body_estimate = False
         self.camera: Optional[Dict] = None
         self.sex: Optional[str] = None
         self.body_samples: List[float] = []        # no sheets: estimates from the body's own proportions
@@ -669,7 +670,8 @@ class HeightWeight(Exercise):
         self.body: Optional[Dict] = None
         self.waist_ratios: List[float] = []
 
-    def configure(self, weight_kg=None, weight_source=None, weight_detail=None, age=None, sex=None, **_):
+    def configure(self, weight_kg=None, weight_source=None, weight_detail=None, age=None, sex=None,
+                  allow_body_estimate=False, **_):
         try:
             if weight_kg is not None and 10 <= float(weight_kg) <= 250:
                 self.weight_kg = round(float(weight_kg), 1)
@@ -679,6 +681,7 @@ class HeightWeight(Exercise):
         self.weight_detail = weight_detail if isinstance(weight_detail, dict) else None
         self.age = age
         self.sex = _sex(sex)
+        self.allow_body_estimate = allow_body_estimate is True
 
     def process(self, pose, t):
         if self.stable is None:
@@ -693,13 +696,19 @@ class HeightWeight(Exercise):
         if m.get("refs"):
             self.ref = m["refs"]
         if "problem" in m:
-            if m["problem"] == "no_reference" and not self.samples:     # no sheets on the wall: estimate from the body
+            if m["problem"] == "no_reference" and not self.samples and not self.ref and self.allow_body_estimate:
+                # Only use body proportions when no wall reference has been detected in this session.
                 self._body_frame(lm, mask, bgr.shape[1], bgr.shape[0])
+                return
+            if m["problem"] == "no_reference" and self.ref:
+                self.problems[m["problem"]] = self.problems.get(m["problem"], 0) + 1
+                self.feedback = "Keep both FLOOR and TOP sheets fully visible"
                 return
             self.problems[m["problem"]] = self.problems.get(m["problem"], 0) + 1
             self.feedback = PROBLEM_TEXT[m["problem"]]
             return
         self.samples.append(m["height_cm"])
+        self._note_outline(lm, mask, bgr.shape[1], bgr.shape[0])
         self.camera = m.get("camera")
         self.fit_rms = m.get("fit_rms_cm")
         st = stable_value(self.samples)
@@ -710,6 +719,18 @@ class HeightWeight(Exercise):
             self.event("rep", f"{st['height_cm']} centimetres")
         else:
             self.feedback = f"Hold still… measuring ({min(len(self.samples), NEED_SAMPLES)}/{NEED_SAMPLES})"
+
+    def _note_outline(self, lm, mask, w, h):
+        """Waist width / body height from the person outline - only used to estimate the weight when no scale reading was given."""
+        if mask is None or lm is None or self.weight_kg is not None:
+            return
+        try:
+            ext = body_extent(mask, lm, w, h)
+            ww = waist_width(mask, lm, w, h)
+        except Exception:
+            return
+        if ext and ww and ext["bottom"] - ext["top"] > 0.25 * h:
+            self.waist_ratios = (self.waist_ratios + [ww / (ext["bottom"] - ext["top"])])[-120:]
 
     # ---- no sheets: "just stand"
     def _body_frame(self, lm, mask, w, h):
@@ -800,7 +821,11 @@ class HeightWeight(Exercise):
         """What the screen shows while measuring: height, weight and how steady the reading is."""
         if self.stable or len(self.samples) >= 3:
             hv = self.stable["height_cm"] if self.stable else round(median(self.samples[-9:]), 1)
-            return {"mode": "sheets", "height_cm": hv, "weight_kg": self.weight_kg, "weight_estimated": False,
+            wv = self.weight_kg
+            if wv is None:
+                waist = median(self.waist_ratios[-BODY_NEED:]) if len(self.waist_ratios) >= 5 else None
+                wv = shape_weight(hv, waist, self.age, self.sex)["weight_kg"]
+            return {"mode": "sheets", "height_cm": hv, "weight_kg": wv, "weight_estimated": self.weight_kg is None,
                     "confidence": 99 if self.stable else min(95, 50 + 2 * len(self.samples)),
                     "samples": len(self.samples), "need": NEED_SAMPLES}
         r = self.body or self._body_reading()
@@ -836,8 +861,18 @@ class HeightWeight(Exercise):
             return self._body_result()
         r = super().result()
         h = self.value() or None
-        r.update({"height_cm": h, "weight_kg": self.weight_kg, "weight_source": self.weight_source,
-                  "weight_detail": self.weight_detail, **bmi_info(h, self.weight_kg, self.age),
+        w, ws, wd, bm = self.weight_kg, self.weight_source, self.weight_detail, bmi_info(h, self.weight_kg, self.age)
+        if h and w is None:                       # no scale reading: estimate the weight from the outline, BMI marked as estimated
+            waist = median(self.waist_ratios[-BODY_NEED:]) if len(self.waist_ratios) >= 5 else None
+            sw = shape_weight(h, waist, self.age, self.sex)
+            w, ws, wd = sw["weight_kg"], "estimate", {"method": "body outline" if sw["from_outline"] else "typical for height",
+                                                      "build": sw["build"]}
+            bm = bmi_info(h, w, self.age)
+            bm["bmi_note"] = (f"Estimated BMI: height measured with the sheets, weight estimated from your body outline "
+                              f"({sw['build']} build). Weigh on a scale for a real BMI.")
+            bm["bmi_estimated"] = True
+        r.update({"height_cm": h, "weight_kg": w, "weight_source": ws,
+                  "weight_detail": wd, **bm,
                   "measurement": {"reference": (self.ref or {}).get("kind"),
                                   "reference_px": ((self.ref or {}).get("floor") or {}).get("size_px"),
                                   "sheets": [k for k in ("floor", "top") if (self.ref or {}).get(k)],

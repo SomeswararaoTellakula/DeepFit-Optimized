@@ -952,6 +952,24 @@ def _pct_or_none(v):
     return x / 100 if x > 1 else x
 
 
+def _measurement_number(value, minimum, maximum):
+    try:
+        number = float(str(value))
+        return number if np.isfinite(number) and minimum <= number <= maximum else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _bmi_for_measurement(height_cm, weight_kg, stored_bmi=None):
+    """Recalculate BMI from valid saved height and weight; use a stored value only when needed."""
+    height = _measurement_number(height_cm, 100, 230)
+    weight = _measurement_number(weight_kg, 10, 250)
+    if height is not None and weight is not None:
+        return round(weight / (height / 100) ** 2, 1)
+    bmi = _measurement_number(stored_bmi, 0.01, float('inf'))
+    return round(bmi, 1) if bmi is not None else None
+
+
 @app.route('/api/get_latest_measurement')
 def get_latest_measurement():
     """API endpoint to get the latest measurement data"""
@@ -981,13 +999,15 @@ def get_latest_measurement():
         
         if final_estimate:
             print(f"Found final estimate: {final_estimate}")
+            height_cm = _measurement_number(final_estimate.get('final_height_cm') or final_estimate.get('height_cm'), 100, 230)
+            weight_kg = _measurement_number(final_estimate.get('final_weight_kg') or final_estimate.get('weight_kg'), 10, 250)
             # Return final estimate data
             return jsonify({
                 'success': True,
                 'data': {
-                    'final_height_cm': final_estimate.get('final_height_cm'),
-                    'final_weight_kg': final_estimate.get('final_weight_kg'),
-                    'bmi': final_estimate.get('bmi'),
+                    'final_height_cm': height_cm,
+                    'final_weight_kg': weight_kg,
+                    'bmi': _bmi_for_measurement(height_cm, weight_kg, final_estimate.get('bmi')),
                     'bmi_category': final_estimate.get('bmi_category'),
                     'bmi_estimated': bool(final_estimate.get('bmi_estimated')),
                     'height_uncertainty': final_estimate.get('height_uncertainty'),
@@ -1013,17 +1033,19 @@ def get_latest_measurement():
         
         if latest_measurement:
             print(f"Found latest measurement: {latest_measurement}")
+            height_cm = _measurement_number(latest_measurement.get('height_cm') or latest_measurement.get('final_height_cm'), 100, 230)
+            weight_kg = _measurement_number(latest_measurement.get('weight_kg') or latest_measurement.get('final_weight_kg'), 10, 250)
             return jsonify({
                 'success': True,
                 'data': {
-                    'height_cm': latest_measurement.get('height_cm'),
-                    'weight_kg': latest_measurement.get('weight_kg'),
+                    'height_cm': height_cm,
+                    'weight_kg': weight_kg,
                     'confidence_score': latest_measurement.get('confidence_score'),
                     'uncertainty_height': latest_measurement.get('uncertainty_height'),
                     'uncertainty_weight': latest_measurement.get('uncertainty_weight'),
                     'calibration_quality': latest_measurement.get('calibration_quality'),
                     'timestamp': latest_measurement.get('timestamp'),
-                    'bmi': latest_measurement.get('bmi')
+                    'bmi': _bmi_for_measurement(height_cm, weight_kg, latest_measurement.get('bmi'))
                 }
             })
         else:

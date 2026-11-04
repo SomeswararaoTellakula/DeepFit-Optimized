@@ -37,7 +37,7 @@
         video.muted = true; video.playsInline = true; video.srcObject = stream;
         try { await video.play(); } catch (e) { }
         const canvas = document.createElement('canvas');
-        let active = true, lastUrl = null;
+        let active = true, lastUrl = null, networkFailures = 0;
 
         async function loop() {
             while (active) {
@@ -51,9 +51,24 @@
                 let r;
                 try {
                     r = await fetch(`/ex/${key}/frame`, { method: 'POST', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
-                } catch (e) { await new Promise((ok) => setTimeout(ok, 500)); continue; }   // network hiccup: try again
+                } catch (e) {
+                    if (++networkFailures >= 5) {
+                        if (onError) onError('Lost connection while sending camera frames. Please try again.');
+                        break;
+                    }
+                    await new Promise((ok) => setTimeout(ok, 500));
+                    continue;
+                }
                 if (r.status === 204) break;                                           // test over
-                if (!r.ok) { await new Promise((ok) => setTimeout(ok, 300)); continue; }
+                if (!r.ok) {                                   // one slow or busy reply is normal on a hosted server: stop only if it keeps failing
+                    if (++networkFailures >= 4) {
+                        if (onError) onError(`Camera frame processing failed (HTTP ${r.status}). Please try again or check the server logs.`);
+                        break;
+                    }
+                    await new Promise((ok) => setTimeout(ok, 400));
+                    continue;
+                }
+                networkFailures = 0;
                 const out = await r.blob();
                 if (!active) break;
                 const url = URL.createObjectURL(out);
